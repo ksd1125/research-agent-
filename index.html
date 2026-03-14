@@ -305,8 +305,8 @@ function promptAgent3meta(standardName, stepsObj, paperContext, targetLocation) 
 {"packages":{"python":["pandas","numpy"],"r":["dplyr","fixest"]}}`;
 }
 
-function promptAgent3python(standardName, stepsObj, paperContext, targetLocation) {
-  return `당신은 Python 데이터 분석 전문가입니다. 아래 조건에 맞는 Python 코드만 출력하세요. 설명이나 마크다운 없이 코드만 출력하세요.
+function promptAgent3code(standardName, stepsObj, paperContext, targetLocation) {
+  return `당신은 데이터 분석 전문가입니다. Python 코드와 R 코드를 각각 작성하세요.
 
 [방법론]: ${standardName}
 [데이터 특성]: ${paperContext.data_characteristics || '일반 데이터'}
@@ -314,23 +314,17 @@ function promptAgent3python(standardName, stepsObj, paperContext, targetLocation
 [분석 절차]: ${JSON.stringify(stepsObj)}
 
 조건:
-1. 위 데이터 특성을 모방한 Mock 데이터 생성 코드를 최상단에 포함
+1. 데이터 특성을 모방한 Mock 데이터 생성 코드를 최상단에 포함
 2. 분석 절차에 따라 모델 피팅
-3. 마지막 print문은 목표 결과물 형태로 출력`;
-}
+3. 마지막 출력문은 목표 결과물 형태로 출력
 
-function promptAgent3r(standardName, stepsObj, paperContext, targetLocation) {
-  return `당신은 R 데이터 분석 전문가입니다. 아래 조건에 맞는 R 코드만 출력하세요. 설명이나 마크다운 없이 코드만 출력하세요.
+반드시 아래 형식으로만 출력하세요:
 
-[방법론]: ${standardName}
-[데이터 특성]: ${paperContext.data_characteristics || '일반 데이터'}
-[목표 결과물]: ${targetLocation}
-[분석 절차]: ${JSON.stringify(stepsObj)}
-
-조건:
-1. 위 데이터 특성을 모방한 Mock 데이터 생성 코드를 최상단에 포함
-2. 분석 절차에 따라 모델 피팅
-3. 마지막 print문은 목표 결과물 형태로 출력`;
+===PYTHON===
+(Python 코드)
+===R===
+(R 코드)
+===END===`;
 }
 
 window.runMultiAgentPipeline = async function() {
@@ -361,7 +355,7 @@ window.runMultiAgentPipeline = async function() {
       throw new Error('Agent 1 파싱 실패. Gemini 응답:\n' + agent1Raw.substring(0, 300));
     }
     var pContext = docResult.paper_context || {};
-    var methods = docResult.detected_methods || [];
+    var methods = (docResult.detected_methods || []).slice(0, 2); // 최대 2개로 제한 (API 할당량 절약)
     var finalMethods = [];
 
     for(var i=0; i<methods.length; i++) {
@@ -376,33 +370,34 @@ window.runMultiAgentPipeline = async function() {
         statResult = {standard_name: m.raw_name, concept: '분석 실패', why_used: '분석 실패', steps: []};
       }
       
-      setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>패키지 및 Python 코드 생성 중...`);
+      setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>Python/R 코드 작성 중...`);
       var codeResult;
       try {
-        // 3-1: 패키지 목록 (JSON)
+        // 3-1: 패키지 + Python/R 코드 통합 (2회 호출로 줄임)
         var metaRaw = await callAgentAPI([{type:'text', text: promptAgent3meta(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 500);
         var metaResult = safeParseJSON(metaRaw);
 
-        // 3-2: Python 코드 (plain text)
-        setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>Python 코드 작성 중...`);
-        var pyRaw = await callAgentAPI([{type:'text', text: promptAgent3python(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 8000);
-        // 코드블록 안의 내용 추출, 없으면 전체 사용
-        var pyMatch = pyRaw.match(/```(?:python)?\s*([\s\S]*?)```/i);
-        var pyCode = pyMatch ? pyMatch[1].trim() : pyRaw.replace(/```/g,'').trim();
+        var codeRaw = await callAgentAPI([{type:'text', text: promptAgent3code(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 8000);
 
-        // 3-3: R 코드 (plain text)
-        setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>R 코드 작성 중...`);
-        var rRaw = await callAgentAPI([{type:'text', text: promptAgent3r(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 8000);
-        var rMatch = rRaw.match(/```(?:r|R)?\s*([\s\S]*?)```/i);
-        var rCode = rMatch ? rMatch[1].trim() : rRaw.replace(/```/g,'').trim();
+        // ===PYTHON=== ~ ===R=== ~ ===END=== 구분자로 추출
+        var pyMatch = codeRaw.match(/===PYTHON===([\s\S]*?)===R===/i);
+        var rMatch  = codeRaw.match(/===R===([\s\S]*?)===END===/i);
+
+        // 구분자 없으면 코드블록으로 fallback
+        var pyCode = pyMatch ? pyMatch[1].trim() : (codeRaw.match(/```(?:python)?\s*([\s\S]*?)```/i)||[])[1] || '';
+        var rCode  = rMatch  ? rMatch[1].trim()  : (codeRaw.match(/```(?:r|R)\s*([\s\S]*?)```/i)||[])[1]  || '';
+
+        // 혹시 남은 백틱 제거
+        pyCode = pyCode.replace(/```/g,'').trim();
+        rCode  = rCode.replace(/```/g,'').trim();
 
         codeResult = {
           packages: metaResult.packages || {python:[], r:[]},
-          python_code: pyCode,
-          r_code: rCode
+          python_code: pyCode || '# 코드 생성 실패 — 재시도해주세요',
+          r_code: rCode || '# 코드 생성 실패 — 재시도해주세요'
         };
       } catch(ce) {
-        codeResult = {packages:{python:[],r:[]}, python_code:'# 코드 생성 실패 — 재시도해주세요', r_code:'# 코드 생성 실패 — 재시도해주세요'};
+        codeResult = {packages:{python:[],r:[]}, python_code:'# 코드 생성 실패\n# 오류: ' + ce.message, r_code:'# 코드 생성 실패\n# 오류: ' + ce.message};
       }
 
       finalMethods.push({
