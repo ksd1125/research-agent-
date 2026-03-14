@@ -194,32 +194,29 @@ function setLoadingMsg(msg) {
 }
 
 function safeParseJSON(raw){
-  // 1. 마크다운 코드블록 제거 (```json ... ``` 또는 ``` ... ```)
+  // 멀티라인 코드블록 완전 제거
   var cleaned = raw
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
+    .replace(/[\s\S]*?```(?:json)?\s*/i, '')  // 앞쪽 ```json 및 그 이전 텍스트 제거
+    .replace(/\s*```[\s\S]*$/i, '')            // 뒤쪽 ``` 및 그 이후 텍스트 제거
     .trim();
 
-  // 2. 직접 파싱 시도
-  try{ return JSON.parse(cleaned); }
-  catch(e){
-    // 3. { 부터 마지막 } 까지만 추출
-    var start = cleaned.indexOf('{');
-    var end = cleaned.lastIndexOf('}');
-    if(start >= 0 && end > start){
-      var extracted = cleaned.slice(start, end+1);
-      try{ return JSON.parse(extracted); } catch(e2){}
-      
-      // 4. 괄호 자동 보정
-      var ob = (extracted.match(/\[/g)||[]).length - (extracted.match(/\]/g)||[]).length;
-      var oc = (extracted.match(/\{/g)||[]).length - (extracted.match(/\}/g)||[]).length;
-      for(var i=0;i<ob;i++) extracted+=']';
-      for(var j=0;j<oc;j++) extracted+='}';
-      try{ return JSON.parse(extracted); } catch(e3){}
-    }
-    throw new Error('JSON 파싱 실패. 원본 응답:\n' + raw.substring(0, 200) + '...');
+  // { 시작점 ~ } 끝점 추출
+  var start = cleaned.indexOf('{');
+  var end = cleaned.lastIndexOf('}');
+  if(start >= 0 && end > start) {
+    cleaned = cleaned.slice(start, end + 1);
   }
+
+  try { return JSON.parse(cleaned); }
+  catch(e) {
+    // 괄호 자동 보정
+    var ob = (cleaned.match(/\[/g)||[]).length - (cleaned.match(/\]/g)||[]).length;
+    var oc = (cleaned.match(/\{/g)||[]).length - (cleaned.match(/\}/g)||[]).length;
+    for(var i=0;i<ob;i++) cleaned+=']';
+    for(var j=0;j<oc;j++) cleaned+='}';
+    try { return JSON.parse(cleaned); } catch(e2) {}
+  }
+  throw new Error('JSON 파싱 실패. 원본 응답:\n' + raw.substring(0, 200) + '...');
 }
 
 async function callAgentAPI(msgContent, maxTok) {
@@ -341,7 +338,13 @@ window.runMultiAgentPipeline = async function() {
     setLoadingMsg('<b>[Agent 1: 문서 분석기]</b><br>논문의 학문 분야와 데이터 구조를 파악 중입니다...');
     var c1 = [{type: 'text', text: '논문 텍스트:\n' + inputText}, {type: 'text', text: promptAgent1()}];
     
-    var docResult = safeParseJSON(await callAgentAPI(c1, 2000));
+    var agent1Raw = await callAgentAPI(c1, 2000);
+    var docResult;
+    try {
+      docResult = safeParseJSON(agent1Raw);
+    } catch(ae) {
+      throw new Error('Agent 1 파싱 실패. Gemini 응답:\n' + agent1Raw.substring(0, 300));
+    }
     var pContext = docResult.paper_context || {};
     var methods = docResult.detected_methods || [];
     var finalMethods = [];
@@ -350,7 +353,13 @@ window.runMultiAgentPipeline = async function() {
       var m = methods[i];
       
       setLoadingMsg(`<b>[Agent 2: 통계 분석기]</b> (${i+1}/${methods.length})<br>'${pContext.domain || '해당 분야'}' 관점에서 '${escHtml(m.raw_name)}' 방법론을 해석 중입니다...`);
-      var statResult = safeParseJSON(await callAgentAPI([{type: 'text', text: promptAgent2(m.raw_name, m.evidence_text, pContext)}], 2000));
+      var stat2Raw = await callAgentAPI([{type: 'text', text: promptAgent2(m.raw_name, m.evidence_text, pContext)}], 2000);
+      var statResult;
+      try {
+        statResult = safeParseJSON(stat2Raw);
+      } catch(se) {
+        statResult = {standard_name: m.raw_name, concept: '분석 실패', why_used: '분석 실패', steps: []};
+      }
       
       setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>'${escHtml(m.target_result_location)}'의 결과를 재현할 Mock 데이터와 코드를 작성 중입니다...`);
       var codeRaw = await callAgentAPI([{type: 'text', text: promptAgent3(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 4000);
