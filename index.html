@@ -383,9 +383,12 @@ window.runMultiAgentPipeline = async function() {
       setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>Python/R 코드 작성 중...`);
       var codeResult;
       try {
-        // 3-1: 패키지 + Python/R 코드 통합 (2회 호출로 줄임)
-        var metaRaw = await callAgentAPI([{type:'text', text: promptAgent3meta(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 500);
-        var metaResult = safeParseJSON(metaRaw);
+        // 3-1: 패키지 목록 (JSON) — 실패해도 계속 진행
+        var metaResult = {packages:{python:[],r:[]}};
+        try {
+          var metaRaw = await callAgentAPI([{type:'text', text: promptAgent3meta(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 500);
+          metaResult = safeParseJSON(metaRaw);
+        } catch(me) { /* 패키지 파싱 실패는 무시 */ }
 
         var codeRaw = await callAgentAPI([{type:'text', text: promptAgent3code(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 8000);
 
