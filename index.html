@@ -358,6 +358,16 @@ window.runMultiAgentPipeline = async function() {
     var methods = (docResult.detected_methods || []).slice(0, 2); // 최대 2개로 제한 (API 할당량 절약)
     var finalMethods = [];
 
+    if(methods.length === 0) {
+      // 방법론 미감지 시 사용자에게 알림
+      docResult.methods = [];
+      docResult._debug = 'Agent 1이 방법론을 감지하지 못했습니다. 논문에 방법론 관련 텍스트가 충분히 포함되어 있는지 확인하세요.';
+      renderResult(docResult);
+      document.getElementById('loading-card').style.display = 'none';
+      document.getElementById('result-wrap').style.display = 'block';
+      return;
+    }
+
     for(var i=0; i<methods.length; i++) {
       var m = methods[i];
       
@@ -445,6 +455,11 @@ function renderResult(data) {
   var nav = document.getElementById('method-nav');
   var blocks = document.getElementById('method-blocks');
   nav.innerHTML = ''; blocks.innerHTML = '';
+
+  if(methods.length === 0) {
+    blocks.innerHTML = '<div class="desc-box" style="color:#d32f2f">방법론을 감지하지 못했습니다. 논문의 분석 방법 섹션이 포함된 텍스트를 붙여넣으세요.' + (data._debug ? '<br><br>' + escHtml(data._debug) : '') + '</div>';
+    return;
+  }
 
   for(var i=0; i<methods.length; i++) {
     var m = methods[i];
