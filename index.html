@@ -194,29 +194,25 @@ function setLoadingMsg(msg) {
 }
 
 function safeParseJSON(raw){
-  // 멀티라인 코드블록 완전 제거
-  var cleaned = raw
-    .replace(/[\s\S]*?```(?:json)?\s*/i, '')  // 앞쪽 ```json 및 그 이전 텍스트 제거
-    .replace(/\s*```[\s\S]*$/i, '')            // 뒤쪽 ``` 및 그 이후 텍스트 제거
-    .trim();
+  // 1차 시도: 그대로 파싱
+  try { return JSON.parse(raw.trim()); } catch(e){}
 
-  // { 시작점 ~ } 끝점 추출
-  var start = cleaned.indexOf('{');
-  var end = cleaned.lastIndexOf('}');
-  if(start >= 0 && end > start) {
-    cleaned = cleaned.slice(start, end + 1);
+  // 2차: 첫 { 부터 마지막 } 까지만 잘라서 파싱 (코드블록 자동 제거 효과)
+  var start = raw.indexOf('{');
+  var end = raw.lastIndexOf('}');
+  if(start >= 0 && end > start){
+    var sliced = raw.slice(start, end + 1);
+    try { return JSON.parse(sliced); } catch(e){}
+
+    // 3차: 괄호 자동 보정
+    var ob = (sliced.match(/\[/g)||[]).length - (sliced.match(/\]/g)||[]).length;
+    var oc = (sliced.match(/\{/g)||[]).length - (sliced.match(/\}/g)||[]).length;
+    for(var i=0;i<ob;i++) sliced+=']';
+    for(var j=0;j<oc;j++) sliced+='}';
+    try { return JSON.parse(sliced); } catch(e){}
   }
 
-  try { return JSON.parse(cleaned); }
-  catch(e) {
-    // 괄호 자동 보정
-    var ob = (cleaned.match(/\[/g)||[]).length - (cleaned.match(/\]/g)||[]).length;
-    var oc = (cleaned.match(/\{/g)||[]).length - (cleaned.match(/\}/g)||[]).length;
-    for(var i=0;i<ob;i++) cleaned+=']';
-    for(var j=0;j<oc;j++) cleaned+='}';
-    try { return JSON.parse(cleaned); } catch(e2) {}
-  }
-  throw new Error('JSON 파싱 실패. 원본 응답:\n' + raw.substring(0, 200) + '...');
+  throw new Error('JSON 파싱 실패. 원본 응답:\n' + raw.substring(0, 300) + '...');
 }
 
 async function callAgentAPI(msgContent, maxTok) {
