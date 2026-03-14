@@ -237,8 +237,7 @@ async function callAgentAPI(msgContent, maxTok) {
         contents: [{role: 'user', parts: [{text: prompt}]}],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: maxTok || 4000,
-          responseMimeType: 'application/json'
+          maxOutputTokens: maxTok || 4000
         }
       })
     }
