@@ -295,23 +295,42 @@ function promptAgent2(rawName, evidenceText, paperContext) {
   }`;
 }
 
-function promptAgent3(standardName, stepsObj, paperContext, targetLocation) {
+function promptAgent3meta(standardName, stepsObj, paperContext, targetLocation) {
   return `당신은 '데이터 프로그래밍 전문 에이전트'입니다. 반드시 순수 JSON만 출력하세요. 첫 글자는 반드시 { 이어야 합니다.
-
-중요: python_code와 r_code 값 안에서 큰따옴표(")는 반드시 이스케이프(\")하거나 작은따옴표(')로 대체하세요. 줄바꿈은 \\n으로 표현하세요.
 
 [목표 방법론]: "${standardName}"
 [데이터 특성]: "${paperContext.data_characteristics || '일반 데이터'}"
-[목표 결과물 위치]: "${targetLocation}"
+
+사용할 Python 패키지 목록과 R 패키지 목록만 JSON으로 출력하세요.
+{"packages":{"python":["pandas","numpy"],"r":["dplyr","fixest"]}}`;
+}
+
+function promptAgent3python(standardName, stepsObj, paperContext, targetLocation) {
+  return `당신은 Python 데이터 분석 전문가입니다. 아래 조건에 맞는 Python 코드만 출력하세요. 설명이나 마크다운 없이 코드만 출력하세요.
+
+[방법론]: ${standardName}
+[데이터 특성]: ${paperContext.data_characteristics || '일반 데이터'}
+[목표 결과물]: ${targetLocation}
 [분석 절차]: ${JSON.stringify(stepsObj)}
 
-조건: 
-1. [데이터 특성]을 모방하는 Mock 데이터 생성 코드를 최상단에 포함할 것.
-2. [분석 절차]를 따라 모델을 피팅할 것.
-3. 마지막 print문은 [목표 결과물 위치]에 제시될 법한 형태로 출력할 것.
+조건:
+1. 위 데이터 특성을 모방한 Mock 데이터 생성 코드를 최상단에 포함
+2. 분석 절차에 따라 모델 피팅
+3. 마지막 print문은 목표 결과물 형태로 출력`;
+}
 
-출력 형식 (이 구조 그대로):
-{"packages":{"python":["pandas"],"r":["dplyr"]},"python_code":"# 코드를 한 줄 문자열로","r_code":"# 코드를 한 줄 문자열로"}`;
+function promptAgent3r(standardName, stepsObj, paperContext, targetLocation) {
+  return `당신은 R 데이터 분석 전문가입니다. 아래 조건에 맞는 R 코드만 출력하세요. 설명이나 마크다운 없이 코드만 출력하세요.
+
+[방법론]: ${standardName}
+[데이터 특성]: ${paperContext.data_characteristics || '일반 데이터'}
+[목표 결과물]: ${targetLocation}
+[분석 절차]: ${JSON.stringify(stepsObj)}
+
+조건:
+1. 위 데이터 특성을 모방한 Mock 데이터 생성 코드를 최상단에 포함
+2. 분석 절차에 따라 모델 피팅
+3. 마지막 print문은 목표 결과물 형태로 출력`;
 }
 
 window.runMultiAgentPipeline = async function() {
@@ -357,13 +376,30 @@ window.runMultiAgentPipeline = async function() {
         statResult = {standard_name: m.raw_name, concept: '분석 실패', why_used: '분석 실패', steps: []};
       }
       
-      setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>'${escHtml(m.target_result_location)}'의 결과를 재현할 Mock 데이터와 코드를 작성 중입니다...`);
-      var codeRaw = await callAgentAPI([{type: 'text', text: promptAgent3(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 4000);
+      setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>패키지 및 Python 코드 생성 중...`);
       var codeResult;
       try {
-        codeResult = safeParseJSON(codeRaw);
+        // 3-1: 패키지 목록 (JSON)
+        var metaRaw = await callAgentAPI([{type:'text', text: promptAgent3meta(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 500);
+        var metaResult = safeParseJSON(metaRaw);
+
+        // 3-2: Python 코드 (plain text)
+        setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>Python 코드 작성 중...`);
+        var pyCode = await callAgentAPI([{type:'text', text: promptAgent3python(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 3000);
+        // 마크다운 코드블록 제거
+        pyCode = pyCode.replace(/^```(?:python)?\s*/i,'').replace(/\s*```\s*$/i,'').trim();
+
+        // 3-3: R 코드 (plain text)
+        setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>R 코드 작성 중...`);
+        var rCode = await callAgentAPI([{type:'text', text: promptAgent3r(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 3000);
+        rCode = rCode.replace(/^```(?:r|R)?\s*/i,'').replace(/\s*```\s*$/i,'').trim();
+
+        codeResult = {
+          packages: metaResult.packages || {python:[], r:[]},
+          python_code: pyCode,
+          r_code: rCode
+        };
       } catch(ce) {
-        // 파싱 실패 시 빈 코드로 fallback
         codeResult = {packages:{python:[],r:[]}, python_code:'# 코드 생성 실패 — 재시도해주세요', r_code:'# 코드 생성 실패 — 재시도해주세요'};
       }
 
