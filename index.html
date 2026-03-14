@@ -385,14 +385,16 @@ window.runMultiAgentPipeline = async function() {
 
         // 3-2: Python 코드 (plain text)
         setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>Python 코드 작성 중...`);
-        var pyCode = await callAgentAPI([{type:'text', text: promptAgent3python(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 3000);
-        // 마크다운 코드블록 제거
-        pyCode = pyCode.replace(/^```(?:python)?\s*/i,'').replace(/\s*```\s*$/i,'').trim();
+        var pyRaw = await callAgentAPI([{type:'text', text: promptAgent3python(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 8000);
+        // 코드블록 안의 내용 추출, 없으면 전체 사용
+        var pyMatch = pyRaw.match(/```(?:python)?\s*([\s\S]*?)```/i);
+        var pyCode = pyMatch ? pyMatch[1].trim() : pyRaw.replace(/```/g,'').trim();
 
         // 3-3: R 코드 (plain text)
         setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>R 코드 작성 중...`);
-        var rCode = await callAgentAPI([{type:'text', text: promptAgent3r(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 3000);
-        rCode = rCode.replace(/^```(?:r|R)?\s*/i,'').replace(/\s*```\s*$/i,'').trim();
+        var rRaw = await callAgentAPI([{type:'text', text: promptAgent3r(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 8000);
+        var rMatch = rRaw.match(/```(?:r|R)?\s*([\s\S]*?)```/i);
+        var rCode = rMatch ? rMatch[1].trim() : rRaw.replace(/```/g,'').trim();
 
         codeResult = {
           packages: metaResult.packages || {python:[], r:[]},
