@@ -194,19 +194,31 @@ function setLoadingMsg(msg) {
 }
 
 function safeParseJSON(raw){
-  var cleaned = raw.replace(/```json|```/g,'').trim();
+  // 1. 마크다운 코드블록 제거 (```json ... ``` 또는 ``` ... ```)
+  var cleaned = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  // 2. 직접 파싱 시도
   try{ return JSON.parse(cleaned); }
   catch(e){
-    var last = cleaned.lastIndexOf('}');
-    if(last>0){
-      var t = cleaned.slice(0,last+1);
-      var ob = (t.match(/\[/g)||[]).length - (t.match(/\]/g)||[]).length;
-      var oc = (t.match(/\{/g)||[]).length - (t.match(/\}/g)||[]).length;
-      for(var i=0;i<ob;i++) t+=']';
-      for(var j=0;j<oc;j++) t+='}';
-      try{ return JSON.parse(t); } catch(e2){}
+    // 3. { 부터 마지막 } 까지만 추출
+    var start = cleaned.indexOf('{');
+    var end = cleaned.lastIndexOf('}');
+    if(start >= 0 && end > start){
+      var extracted = cleaned.slice(start, end+1);
+      try{ return JSON.parse(extracted); } catch(e2){}
+      
+      // 4. 괄호 자동 보정
+      var ob = (extracted.match(/\[/g)||[]).length - (extracted.match(/\]/g)||[]).length;
+      var oc = (extracted.match(/\{/g)||[]).length - (extracted.match(/\}/g)||[]).length;
+      for(var i=0;i<ob;i++) extracted+=']';
+      for(var j=0;j<oc;j++) extracted+='}';
+      try{ return JSON.parse(extracted); } catch(e3){}
     }
-    throw new Error('JSON 파싱 실패. 원본 응답:\n' + raw.substring(0, 100) + '...');
+    throw new Error('JSON 파싱 실패. 원본 응답:\n' + raw.substring(0, 200) + '...');
   }
 }
 
