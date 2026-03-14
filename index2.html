@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResearchMethodAgent v3.1 (Gemini)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:sans-serif;background:#f7f8fa;color:#1a1a1a;padding:1.2rem}
+.badge{display:inline-flex;background:#E6F1FB;color:#185FA5;font-size:11px;padding:3px 10px;border-radius:8px;margin-bottom:6px}
+.hdr{background:#fff;border:0.5px solid #e0e0e0;border-radius:14px;padding:1rem 1.2rem;margin-bottom:1rem}
+.hdr-title{font-size:15px;font-weight:600;margin-bottom:2px}
+.hdr-sub{font-size:11px;color:#666}
+.card{background:#fff;border:0.5px solid #e0e0e0;border-radius:12px;padding:1rem;margin-bottom:10px}
+.ctitle{font-size:10px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.up-area{border:1.5px dashed #ccc;border-radius:10px;padding:1.2rem;text-align:center;cursor:pointer;transition:background .15s;margin-bottom:8px}
+.up-area:hover{background:#f5f5f5}
+.up-area.active{border-color:#185FA5;background:#f0f6ff}
+.up-icon{font-size:22px;margin-bottom:5px;color:#aaa}
+.up-title{font-size:12px;font-weight:500;margin-bottom:2px}
+.up-sub{font-size:10px;color:#888}
+.tabbr{display:flex;gap:3px;margin-bottom:10px}
+.tab{font-size:11px;padding:4px 10px;border-radius:8px;border:0.5px solid #e0e0e0;cursor:pointer;background:#fff;color:#666;transition:all .15s}
+.tab.on{background:#E6F1FB;color:#0C447C;border-color:transparent;font-weight:500}
+textarea, input[type=text], input[type=password]{width:100%;font-size:11px;padding:8px 10px;border-radius:8px;border:0.5px solid #ccc;background:#fff;color:#1a1a1a;margin-bottom:8px}
+textarea{resize:vertical;line-height:1.6;min-height:140px}
+.form-lbl{font-size:10px;color:#666;margin-bottom:3px;display:block;margin-top:8px}
+.run-btn{width:100%;padding:9px;border-radius:10px;border:none;background:#185FA5;color:#fff;font-size:13px;font-weight:600;cursor:pointer;margin-top:10px;transition:background .15s}
+.run-btn:hover{background:#0C447C}
+.run-btn:disabled{background:#aaa;cursor:not-allowed}
+.spin-wrap{text-align:center;padding:2.5rem 1rem}
+.spin{width:30px;height:30px;border:2px solid #e0e0e0;border-top-color:#185FA5;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin-msg{font-size:11px;color:#888;line-height:1.8}
+
+.result-wrap{display:none}
+.paper-info{background:#E6F1FB;border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.paper-title{font-size:14px;font-weight:600;color:#0C447C;margin-bottom:6px}
+.paper-meta{font-size:11px;color:#185FA5;margin-bottom:8px}
+.context-tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px}
+.ctag{font-size:10px;padding:3px 8px;border-radius:4px;background:#fff;color:#0C447C;border:1px solid #b3d4f0;font-weight:500}
+
+.method-nav{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}
+.mnav-btn{font-size:11px;padding:5px 12px;border-radius:20px;border:0.5px solid #e0e0e0;background:#fff;color:#555;cursor:pointer;transition:all .15s;white-space:nowrap}
+.mnav-btn.on{background:#185FA5;color:#fff;border-color:#185FA5}
+.method-block{display:none}
+.method-block.on{display:block}
+.method-header{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.method-badge{font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;background:#E6F1FB;color:#0C447C}
+.method-name{font-size:14px;font-weight:600}
+.section{margin-bottom:14px}
+.section-title{font-size:11px;font-weight:600;color:#333;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.section-title::before{content:'';display:inline-block;width:3px;height:13px;border-radius:2px;background:#185FA5;flex-shrink:0}
+.desc-box{background:#f8f9fb;border-radius:8px;padding:10px 12px;font-size:11px;color:#333;line-height:1.75}
+.insight-box{background:#FAEEDA;border-left:3px solid #BA7517;border-radius:0 8px 8px 0;padding:9px 12px;font-size:11px;color:#412402;line-height:1.7}
+.evidence-box{background:#e8f4f8;border-left:3px solid #185FA5;border-radius:0 8px 8px 0;padding:9px 12px;font-size:10px;color:#0c447c;line-height:1.6;margin-bottom:8px;font-style:italic;}
+.target-box{background:#eef7ee;border-left:3px solid #2e7d32;border-radius:0 8px 8px 0;padding:6px 12px;font-size:10px;color:#1b5e20;line-height:1.6;margin-bottom:8px;font-weight:500}
+
+.step-list{display:flex;flex-direction:column;gap:5px}
+.step-item{display:flex;gap:9px;align-items:flex-start}
+.step-num{width:20px;height:20px;border-radius:50%;background:#185FA5;color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.step-text{font-size:11px;color:#333;line-height:1.65;flex:1}
+
+.code-wrap{position:relative;margin-top:4px}
+.code-lang{display:flex;gap:4px;margin-bottom:4px}
+.clang{font-size:10px;padding:3px 9px;border-radius:6px;border:0.5px solid #e0e0e0;cursor:pointer;background:#fff;color:#666}
+.clang.on{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+.code-block{display:none;position:relative}
+.code-block.on{display:block}
+pre{background:#1e1e2e;border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:10.5px;line-height:1.7;color:#cdd6f4;font-family:'Consolas','Menlo',monospace}
+.copy-btn{position:absolute;top:8px;right:8px;font-size:9px;padding:3px 8px;border-radius:5px;border:0.5px solid #444;background:#2a2a3e;color:#aaa;cursor:pointer}
+.pkg-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+.pkg{font-size:10px;padding:2px 8px;border-radius:4px;background:#f0f0f0;color:#333;font-family:monospace}
+.home-link{font-size:11px;color:#185FA5;cursor:pointer;text-decoration:underline;margin-top:8px;display:inline-block}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="badge">ResearchMethodAgent v3.1 · Gemini 1.5 Flash (무료)</div>
+  <div class="hdr-title">도메인 인지형 에이전트 파이프라인 (PoC)</div>
+  <div class="hdr-sub">문서 맥락 파악 ➔ 맞춤형 통계 분석 ➔ 타겟 결과 재현 코딩 &nbsp;|&nbsp; Google Gemini 1.5 Flash 무료 티어 사용</div>
+</div>
+
+<div class="card" id="config-card">
+  <div class="ctitle">환경 설정</div>
+  <input type="password" id="api-key" placeholder="Google AI Studio API Key (AIza...) — aistudio.google.com 에서 무료 발급">
+  <div style="font-size:10px;color:#888;margin-top:-4px">※ 무료 티어: 분당 15회 / 하루 1,500회 · 신용카드 불필요</div>
+</div>
+
+<div class="card" id="input-card">
+  <div class="ctitle">분석할 논문 발췌본 입력</div>
+  <div class="tabbr">
+    <div class="tab on" id="tab-text" onclick="switchTab('text')">📝 텍스트 붙여넣기 (권장)</div>
+    <div class="tab" id="tab-pdf" onclick="switchTab('pdf')">📄 PDF 업로드</div>
+  </div>
+
+  <div id="panel-text">
+    <textarea id="txt-input" placeholder="여기에 심리학, 경제학, 빅데이터 등의 가상 논문 텍스트를 붙여넣으세요. (에이전트가 도메인을 스스로 파악합니다)"></textarea>
+  </div>
+  
+  <div id="panel-pdf" style="display:none">
+    <div class="up-area" id="drop-zone" onclick="document.getElementById('pdf-file').click()">
+      <div class="up-icon">📄</div>
+      <div class="up-title">PDF 클릭 또는 드래그</div>
+      <input type="file" id="pdf-file" accept=".pdf" style="display:none" onchange="onFileSelect(this)">
+    </div>
+    <div id="pdf-name" style="font-size:10px;color:#185FA5;margin-bottom:6px;display:none"></div>
+    <div id="pdf-extract-status" style="font-size:10px;color:#888;margin-bottom:6px;display:none"></div>
+  </div>
+
+  <div id="status-msg" class="desc-box" style="display:none;margin-top:8px;color:#d32f2f"></div>
+  <button class="run-btn" id="run-btn" onclick="runMultiAgentPipeline()">🚀 도메인 맞춤형 파이프라인 실행</button>
+</div>
+
+<div class="card" id="loading-card" style="display:none">
+  <div class="spin-wrap">
+    <div class="spin"></div>
+    <div class="spin-msg" id="loading-msg">파이프라인 준비 중...</div>
+  </div>
+</div>
+
+<div id="result-wrap" class="result-wrap">
+  <div class="paper-info">
+    <div class="paper-title" id="r-title">—</div>
+    <div class="paper-meta" id="r-meta">—</div>
+    <div class="context-tags" id="r-context"></div>
+  </div>
+  <div class="method-nav" id="method-nav"></div>
+  <div id="method-blocks"></div>
+  <span class="home-link" onclick="resetAll()">← 새 논문 분석하기</span>
+</div>
+
+<script>
+var curTab = 'text';
+var pdfB64 = null;
+var pdfExtractedText = null;
+
+// pdf.js: 샌드박스 환경 — worker 설정 생략, 자동 fake worker 사용
+
+function switchTab(t) {
+  curTab = t;
+  document.getElementById('tab-text').classList.toggle('on', t==='text');
+  document.getElementById('tab-pdf').classList.toggle('on', t==='pdf');
+  document.getElementById('panel-text').style.display = (t==='text') ? 'block' : 'none';
+  document.getElementById('panel-pdf').style.display = (t==='pdf') ? 'block' : 'none';
+}
+
+async function onFileSelect(input) {
+  var file = input.files[0];
+  if(!file) return;
+  pdfExtractedText = null;
+
+  var nameEl = document.getElementById('pdf-name');
+  var statusEl = document.getElementById('pdf-extract-status');
+  nameEl.style.display = 'block';
+  nameEl.textContent = '선택됨: ' + file.name;
+  statusEl.style.display = 'block';
+  statusEl.textContent = '📖 PDF 텍스트 추출 중...';
+
+  try {
+    var arrayBuffer = await file.arrayBuffer();
+    var pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+    var totalPages = pdf.numPages;
+    var allText = '';
+
+    for(var p = 1; p <= totalPages; p++) {
+      statusEl.textContent = `📖 텍스트 추출 중... (${p}/${totalPages} 페이지)`;
+      var page = await pdf.getPage(p);
+      var content = await page.getTextContent();
+      var pageText = content.items.map(function(item){ return item.str; }).join(' ');
+      allText += pageText + '\n\n';
+    }
+
+    pdfExtractedText = allText.trim();
+    statusEl.style.color = '#2e7d32';
+    statusEl.textContent = `✅ 추출 완료 — ${totalPages}페이지 / 약 ${Math.round(pdfExtractedText.length/2)}자`;
+  } catch(err) {
+    statusEl.style.color = '#d32f2f';
+    statusEl.textContent = '❌ 텍스트 추출 실패: ' + err.message;
+    pdfExtractedText = null;
+  }
+}
+
+function setStatus(msg, show) {
+  var el = document.getElementById('status-msg');
+  el.style.display = show ? 'block' : 'none';
+  if(show) el.innerHTML = msg;
+}
+
+function setLoadingMsg(msg) {
+  document.getElementById('loading-msg').innerHTML = msg;
+}
+
+function safeParseJSON(raw){
+  var cleaned = raw.replace(/```json|```/g,'').trim();
+  try{ return JSON.parse(cleaned); }
+  catch(e){
+    var last = cleaned.lastIndexOf('}');
+    if(last>0){
+      var t = cleaned.slice(0,last+1);
+      var ob = (t.match(/\[/g)||[]).length - (t.match(/\]/g)||[]).length;
+      var oc = (t.match(/\{/g)||[]).length - (t.match(/\}/g)||[]).length;
+      for(var i=0;i<ob;i++) t+=']';
+      for(var j=0;j<oc;j++) t+='}';
+      try{ return JSON.parse(t); } catch(e2){}
+    }
+    throw new Error('JSON 파싱 실패. 원본 응답:\n' + raw.substring(0, 100) + '...');
+  }
+}
+
+async function callAgentAPI(msgContent, maxTok) {
+  var apiKey = document.getElementById('api-key').value.trim();
+  if(!apiKey) throw new Error("API 키를 입력해주세요.");
+
+  // msgContent가 배열인 경우 텍스트만 추출 (PDF base64 제외 — Gemini는 별도 처리)
+  var prompt = '';
+  if(Array.isArray(msgContent)) {
+    msgContent.forEach(function(item) {
+      if(item.type === 'text') prompt += item.text + '\n';
+      else if(item.type === 'document') {
+        // PDF는 base64 인라인 지원 (Gemini 1.5+)
+        // 텍스트 탭에서는 도달하지 않음
+      }
+    });
+  } else {
+    prompt = msgContent;
+  }
+
+  var resp = await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey,
+    {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        contents: [{role: 'user', parts: [{text: prompt}]}],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: maxTok || 4000,
+          responseMimeType: 'application/json'
+        }
+      })
+    }
+  );
+
+  var d = await resp.json();
+  if(d.error) throw new Error(d.error.message);
+  var candidate = d.candidates && d.candidates[0];
+  if(!candidate) throw new Error('Gemini 응답이 비어있습니다.');
+  return candidate.content.parts.map(p => p.text || '').join('');
+}
+
+function promptAgent1() {
+  return `당신은 '문서 분석 전문 에이전트'입니다. 제공된 텍스트를 분석하여 오직 JSON 포맷만 출력하세요. 다른 설명은 붙이지 마세요.
+  
+  {
+    "metadata": {
+      "title": "논문 제목", 
+      "summary": "1문장 요약"
+    },
+    "paper_context": {
+      "domain": "학문 분야 (예: 심리학, 경제학, 컴퓨터공학 등)",
+      "research_type": "연구 형태 (예: 실험연구, 패널분석, 텍스트마이닝 등)",
+      "data_characteristics": "사용된 데이터의 구체적 특성 (예: 2x2 피험자 설계, 10년치 패널, 트위터 텍스트 등)"
+    },
+    "detected_methods": [
+      {
+        "raw_name": "본문에 언급된 방법론 명칭",
+        "evidence_text": "방법론이 언급된 정확한 발췌 문장",
+        "target_result_location": "이 분석 결과가 제시된 위치 (예: Table 2, Page 8 등. 텍스트에 없다면 '명시되지 않음')"
+      }
+    ]
+  }`;
+}
+
+function promptAgent2(rawName, evidenceText, paperContext) {
+  return `당신은 '통계분석 전문 에이전트'입니다. 아래 논문 맥락을 바탕으로 방법론을 분석하고 순수 JSON만 출력하세요.
+  
+  [논문 분야]: ${paperContext.domain || '알 수 없음'}
+  [데이터 특성]: ${paperContext.data_characteristics || '알 수 없음'}
+  [발췌 문장]: "${evidenceText}"
+  
+  {
+    "standard_name": "표준화된 학술적 명칭 (예: OLS Regression)",
+    "concept": "이 방법론의 통계적 개념을 위 [논문 분야]의 관점에서 설명 (2~3문장)",
+    "why_used": "위 [데이터 특성]을 고려했을 때, 이 논문에서 이 방법을 채택한 학술적 이유",
+    "steps": [
+      {"step": 1, "name": "단계명", "desc": "구체적 분석/전처리 절차"}
+    ]
+  }`;
+}
+
+function promptAgent3(standardName, stepsObj, paperContext, targetLocation) {
+  return `당신은 '데이터 프로그래밍 전문 에이전트'입니다. 아래 정보를 바탕으로 실행 가능한 코드 초안을 순수 JSON으로 작성하세요.
+  
+  [목표 방법론]: "${standardName}"
+  [데이터 특성]: "${paperContext.data_characteristics || '일반 데이터'}"
+  [목표 결과물 위치]: "${targetLocation}"
+  [분석 절차]: ${JSON.stringify(stepsObj)}
+  
+  *조건*: 
+  1. 위 [데이터 특성]을 완벽히 모방하는 가상의 Mock 데이터를 생성하는 코드를 최상단에 포함할 것.
+  2. 위 [분석 절차]를 따라 모델을 피팅할 것.
+  3. 마지막 출력문(print)은 위 [목표 결과물 위치]에 제시될 법한 형태(예: 표, 회귀계수 등)를 주석과 함께 출력할 것.
+  
+  {
+    "packages": {"python": ["pandas"], "r": ["dplyr"]},
+    "python_code": "# Python 구현 코드",
+    "r_code": "# R 구현 코드"
+  }`;
+}
+
+window.runMultiAgentPipeline = async function() {
+  var btn = document.getElementById('run-btn');
+  var txt = document.getElementById('txt-input').value;
+  
+  if(!document.getElementById('api-key').value) { setStatus('환경 설정에서 API 키를 입력해주세요.', true); return; }
+  if(curTab==='pdf' && !pdfExtractedText) { setStatus('PDF 파일을 선택하고 텍스트 추출이 완료될 때까지 기다려주세요.', true); return; }
+  if(curTab==='text' && !txt.trim()) { setStatus('논문 텍스트를 입력해주세요.', true); return; }
+
+  setStatus('', false);
+  btn.disabled = true;
+  document.getElementById('input-card').style.display = 'none';
+  document.getElementById('loading-card').style.display = 'block';
+
+  // PDF 탭이면 추출된 텍스트를 txt로 사용
+  var inputText = (curTab === 'pdf') ? pdfExtractedText : txt;
+
+  try {
+    setLoadingMsg('<b>[Agent 1: 문서 분석기]</b><br>논문의 학문 분야와 데이터 구조를 파악 중입니다...');
+    var c1 = [{type: 'text', text: '논문 텍스트:\n' + inputText}, {type: 'text', text: promptAgent1()}];
+    
+    var docResult = safeParseJSON(await callAgentAPI(c1, 2000));
+    var pContext = docResult.paper_context || {};
+    var methods = docResult.detected_methods || [];
+    var finalMethods = [];
+
+    for(var i=0; i<methods.length; i++) {
+      var m = methods[i];
+      
+      setLoadingMsg(`<b>[Agent 2: 통계 분석기]</b> (${i+1}/${methods.length})<br>'${pContext.domain || '해당 분야'}' 관점에서 '${escHtml(m.raw_name)}' 방법론을 해석 중입니다...`);
+      var statResult = safeParseJSON(await callAgentAPI([{type: 'text', text: promptAgent2(m.raw_name, m.evidence_text, pContext)}], 2000));
+      
+      setLoadingMsg(`<b>[Agent 3: 코드 생성기]</b> (${i+1}/${methods.length})<br>'${escHtml(m.target_result_location)}'의 결과를 재현할 Mock 데이터와 코드를 작성 중입니다...`);
+      var codeResult = safeParseJSON(await callAgentAPI([{type: 'text', text: promptAgent3(statResult.standard_name, statResult.steps, pContext, m.target_result_location)}], 3000));
+
+      finalMethods.push({
+        raw_name: m.raw_name,
+        evidence: m.evidence_text,
+        target_location: m.target_result_location,
+        standard_name: statResult.standard_name,
+        concept: statResult.concept,
+        why_used: statResult.why_used,
+        steps: statResult.steps,
+        packages: codeResult.packages,
+        python_code: codeResult.python_code,
+        r_code: codeResult.r_code
+      });
+    }
+
+    docResult.methods = finalMethods;
+    renderResult(docResult);
+
+  } catch(e) {
+    document.getElementById('loading-card').style.display = 'none';
+    document.getElementById('input-card').style.display = 'block';
+    btn.disabled = false;
+    setStatus('오류 발생: ' + e.message, true);
+  }
+};
+
+function renderResult(data) {
+  document.getElementById('loading-card').style.display = 'none';
+  document.getElementById('result-wrap').style.display = 'block';
+
+  var meta = data.metadata || {};
+  var ctx = data.paper_context || {};
+
+  document.getElementById('r-title').textContent = meta.title || '제목 미상';
+  document.getElementById('r-meta').textContent = meta.summary || '';
+  
+  var ctxHtml = '';
+  if(ctx.domain) ctxHtml += `<div class="ctag">분야: ${escHtml(ctx.domain)}</div>`;
+  if(ctx.research_type) ctxHtml += `<div class="ctag">유형: ${escHtml(ctx.research_type)}</div>`;
+  if(ctx.data_characteristics) ctxHtml += `<div class="ctag">데이터: ${escHtml(ctx.data_characteristics)}</div>`;
+  document.getElementById('r-context').innerHTML = ctxHtml;
+
+  var methods = data.methods || [];
+  var nav = document.getElementById('method-nav');
+  var blocks = document.getElementById('method-blocks');
+  nav.innerHTML = ''; blocks.innerHTML = '';
+
+  for(var i=0; i<methods.length; i++) {
+    var m = methods[i];
+    
+    var nbtn = document.createElement('div');
+    nbtn.className = 'mnav-btn' + (i===0?' on':'');
+    nbtn.textContent = m.standard_name || m.raw_name;
+    nbtn.setAttribute('data-idx', i);
+    nbtn.onclick = (function(idx){ return function(){ switchMethod(idx); }; })(i);
+    nav.appendChild(nbtn);
+
+    var block = document.createElement('div');
+    block.className = 'card method-block' + (i===0?' on':'');
+    block.id = 'mblock-'+i;
+
+    var pkgPy = (m.packages?.python||[]).map(p => `<span class="pkg">${p}</span>`).join('');
+    var pkgR = (m.packages?.r||[]).map(p => `<span class="pkg">${p}</span>`).join('');
+    var stepsHtml = (m.steps||[]).map((s, si) => 
+      `<div class="step-item"><div class="step-num">${s.step||si+1}</div><div><div class="step-text"><b>${escHtml(s.name)}</b> — ${escHtml(s.desc)}</div></div></div>`
+    ).join('');
+
+    block.innerHTML = `
+      <div class="method-header">
+        <div class="method-badge">Agent 2 표준화</div>
+        <div class="method-name">${escHtml(m.standard_name)} <span style="font-size:11px;color:#888;font-weight:400">(원문: ${escHtml(m.raw_name)})</span></div>
+      </div>
+      
+      <div class="section">
+        <div class="section-title">추출 근거 및 목표 (Agent 1)</div>
+        <div class="evidence-box">"${escHtml(m.evidence)}"</div>
+        <div class="target-box">🎯 <b>목표 재현 위치:</b> ${escHtml(m.target_location)}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">학술적 해석 및 절차 (Agent 2)</div>
+        <div class="insight-box" style="margin-bottom:8px"><b>도메인 맞춤 해석:</b><br>${escHtml(m.why_used)}</div>
+        <div class="desc-box" style="margin-bottom:8px">${escHtml(m.concept)}</div>
+        <div class="step-list">${stepsHtml}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">맞춤형 재현 코드 (Agent 3)</div>
+        <div style="margin-bottom:8px;font-size:11px;color:#555">※ ${escHtml(ctx.data_characteristics)} 특성을 반영한 Mock 데이터를 자동 생성합니다.</div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:10px;color:#666">Python: <div class="pkg-row" style="display:inline-flex">${pkgPy}</div></div>
+          <div style="font-size:10px;color:#666;margin-top:4px">R: <div class="pkg-row" style="display:inline-flex">${pkgR}</div></div>
+        </div>
+        <div class="code-lang">
+          <div class="clang on" id="clang-py-${i}" onclick="switchLang(${i},'py')">Python</div>
+          <div class="clang" id="clang-r-${i}" onclick="switchLang(${i},'r')">R</div>
+        </div>
+        <div class="code-wrap">
+          <div class="code-block on" id="code-py-${i}">
+            <div class="copy-btn" onclick="copyCode('code-py-${i}')">복사</div>
+            <pre>${escHtml(m.python_code)}</pre>
+          </div>
+          <div class="code-block" id="code-r-${i}">
+            <div class="copy-btn" onclick="copyCode('code-r-${i}')">복사</div>
+            <pre>${escHtml(m.r_code)}</pre>
+          </div>
+        </div>
+      </div>
+    `;
+    blocks.appendChild(block);
+  }
+}
+
+function switchMethod(idx){
+  document.querySelectorAll('.mnav-btn').forEach(btn => btn.classList.toggle('on', parseInt(btn.getAttribute('data-idx'))===idx));
+  document.querySelectorAll('.method-block').forEach(blk => blk.classList.toggle('on', blk.id==='mblock-'+idx));
+}
+function switchLang(idx,lang){
+  document.getElementById('clang-py-'+idx).classList.toggle('on',lang==='py');
+  document.getElementById('clang-r-'+idx).classList.toggle('on',lang==='r');
+  document.getElementById('code-py-'+idx).classList.toggle('on',lang==='py');
+  document.getElementById('code-r-'+idx).classList.toggle('on',lang==='r');
+}
+function copyCode(id){
+  navigator.clipboard.writeText(document.getElementById(id).querySelector('pre').textContent).then(()=>{
+    var b = document.getElementById(id).querySelector('.copy-btn'); b.textContent='복사됨!'; setTimeout(()=>b.textContent='복사',1500);
+  });
+}
+function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\n/g,'<br>'); }
+function resetAll(){ location.reload(); }
+</script>
+</body>
+</html>
