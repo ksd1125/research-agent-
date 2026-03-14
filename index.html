@@ -78,9 +78,9 @@ pre{background:#1e1e2e;border-radius:10px;padding:14px 16px;overflow-x:auto;font
 <body>
 
 <div class="hdr">
-  <div class="badge">ResearchMethodAgent v3.1 · Gemini 1.5 Flash (무료)</div>
+  <div class="badge">ResearchMethodAgent v3.1 · Gemini 2.5 Flash (무료)</div>
   <div class="hdr-title">도메인 인지형 에이전트 파이프라인 (PoC)</div>
-  <div class="hdr-sub">문서 맥락 파악 ➔ 맞춤형 통계 분석 ➔ 타겟 결과 재현 코딩 &nbsp;|&nbsp; Google Gemini 1.5 Flash 무료 티어 사용</div>
+  <div class="hdr-sub">문서 맥락 파악 ➔ 맞춤형 통계 분석 ➔ 타겟 결과 재현 코딩 &nbsp;|&nbsp; Google Gemini 2.5 Flash 무료 티어 사용</div>
 </div>
 
 <div class="card" id="config-card">
@@ -229,7 +229,7 @@ async function callAgentAPI(msgContent, maxTok) {
   }
 
   var resp = await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + apiKey,
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey,
     {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
