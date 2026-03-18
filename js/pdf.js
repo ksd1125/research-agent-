@@ -3,6 +3,12 @@
  * ResearchMethodAgent v4.0
  */
 
+/* pdf.js Worker 경로 설정 (CDN 버전과 일치해야 함) */
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
 /** @type {string|null} 추출된 텍스트 */
 let extractedText = null;
 
