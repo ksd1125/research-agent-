@@ -4,6 +4,7 @@
  */
 
 import { escapeHtml, copyToClipboard } from './utils.js';
+import { generateMockData, computeStats, downloadCSV } from './mockdata.js';
 
 /* ============================================================
    DOM 요소 캐싱
@@ -18,6 +19,8 @@ export const dom = {
   get inputCard()     { return $('input-card'); },
   get loadingCard()   { return $('loading-card'); },
   get loadingMsg()    { return $('loading-msg'); },
+  get loadingTip()    { return $('loading-tip'); },
+  get progressBar()   { return $('progress-bar'); },
   get statusMsg()     { return $('status-msg'); },
   get runBtn()        { return $('run-btn'); },
   get resultWrap()    { return $('result-wrap'); },
@@ -71,6 +74,78 @@ export function setLoading(message) {
 }
 
 /* ============================================================
+   로딩 애니메이션 — 에이전트 스텝 + 프로그레스 + 팁
+   ============================================================ */
+
+const TIPS = [
+  { label: '💡 Tip', text: 'OLS 추정은 편의(bias)가 존재할 수 있어 도구변수(IV) 추정법으로 보완합니다.' },
+  { label: '📚 알아두기', text: '도구변수는 적합성(relevance)과 외생성(exogeneity) 두 조건을 만족해야 합니다.' },
+  { label: '🔬 방법론', text: '2SLS(Two-Stage Least Squares)는 내생성 문제를 해결하는 대표적인 추정 방법입니다.' },
+  { label: '💡 Tip', text: '가상 데이터는 원본의 기술통계(평균, 표준편차)를 모방하여 유사한 분석 결과를 재현합니다.' },
+  { label: '📊 통계', text: 'F-통계량이 10 이상이면 약한 도구변수(weak IV) 문제가 없다고 판단합니다.' },
+  { label: '🧪 실습', text: '생성된 가상 데이터로 Python/R 코드를 직접 실행해보면 분석 방법을 체득할 수 있습니다.' },
+  { label: '💡 Tip', text: '이분산-일치(HC) 표준오차를 사용하면 이분산성에 강건한 추론이 가능합니다.' },
+  { label: '📚 알아두기', text: '내생성(endogeneity)은 설명변수와 오차항이 상관될 때 발생하는 추정 문제입니다.' },
+];
+
+let tipInterval = null;
+
+/**
+ * 에이전트 스텝 활성화 (1~4)
+ * @param {number} step — 현재 활성 에이전트 번호
+ */
+export function setAgentStep(step) {
+  for (let i = 1; i <= 4; i++) {
+    const el = $(`step-agent${i}`);
+    if (!el) continue;
+    el.classList.remove('active', 'done');
+    if (i < step) el.classList.add('done');
+    else if (i === step) el.classList.add('active');
+  }
+}
+
+/**
+ * 프로그레스 바 업데이트
+ * @param {number} percent — 0~100
+ */
+export function setProgress(percent) {
+  if (dom.progressBar) {
+    dom.progressBar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+  }
+}
+
+/**
+ * 로딩 팁 순환 시작
+ */
+export function startTipRotation() {
+  showRandomTip();
+  tipInterval = setInterval(showRandomTip, 6000);
+}
+
+/**
+ * 로딩 팁 순환 중지
+ */
+export function stopTipRotation() {
+  if (tipInterval) {
+    clearInterval(tipInterval);
+    tipInterval = null;
+  }
+  if (dom.loadingTip) dom.loadingTip.style.display = 'none';
+}
+
+function showRandomTip() {
+  const tip = TIPS[Math.floor(Math.random() * TIPS.length)];
+  if (dom.loadingTip) {
+    dom.loadingTip.style.display = 'block';
+    dom.loadingTip.innerHTML = `<span class="loading-tip-label">${tip.label}</span> ${tip.text}`;
+    // 리-애니메이션
+    dom.loadingTip.style.animation = 'none';
+    dom.loadingTip.offsetHeight; // reflow
+    dom.loadingTip.style.animation = 'fadeInUp 0.5s ease';
+  }
+}
+
+/* ============================================================
    화면 전환 (입력 → 로딩 → 결과)
    ============================================================ */
 
@@ -79,17 +154,23 @@ export function showLoadingView() {
   dom.runBtn.disabled = true;
   dom.inputCard.style.display = 'none';
   dom.loadingCard.style.display = 'block';
+  // 초기화
+  setAgentStep(0);
+  setProgress(0);
+  startTipRotation();
 }
 
 export function showInputView() {
   dom.loadingCard.style.display = 'none';
   dom.inputCard.style.display = 'block';
   dom.runBtn.disabled = false;
+  stopTipRotation();
 }
 
 export function showResultView() {
   dom.loadingCard.style.display = 'none';
   dom.resultWrap.classList.add('visible');
+  stopTipRotation();
 }
 
 /* ============================================================
@@ -120,6 +201,13 @@ export function showPdfError(message) {
 /* ============================================================
    분석 결과 렌더링
    ============================================================ */
+
+/** 저장된 기술통계 (가상 데이터 생성용) */
+let _descriptiveStats = null;
+
+export function setDescriptiveStats(stats) {
+  _descriptiveStats = stats;
+}
 
 /**
  * 분석 결과 전체 렌더링
@@ -156,7 +244,6 @@ export function renderResult(data) {
 
   // 방법론 탭 + 블록 렌더링
   methods.forEach((m, i) => {
-    // 네비게이션 버튼
     const btn = document.createElement('button');
     btn.className = `method-nav-btn${i === 0 ? ' active' : ''}`;
     btn.textContent = m.standard_name || m.raw_name;
@@ -164,7 +251,6 @@ export function renderResult(data) {
     btn.addEventListener('click', () => switchMethod(i));
     dom.methodNav.appendChild(btn);
 
-    // 방법론 블록
     const block = document.createElement('div');
     block.className = `card method-block${i === 0 ? ' active' : ''}`;
     block.id = `mblock-${i}`;
@@ -172,10 +258,9 @@ export function renderResult(data) {
     dom.methodBlocks.appendChild(block);
   });
 
-  // 코드 복사 버튼 이벤트 바인딩
   bindCopyButtons();
-  // 코드 언어 탭 이벤트 바인딩
   bindLangTabs();
+  bindMockDataButtons();
 }
 
 /**
@@ -238,7 +323,117 @@ function buildMethodBlockHtml(m, index, ctx) {
         </div>
       </div>
     </div>
+
+    <!-- 가상 데이터 생성 섹션 -->
+    <div class="section mockdata-section">
+      <div class="section-title">🧪 실습용 가상 데이터 (Agent 4)</div>
+      <div class="text-xs text-muted mb-8">
+        논문의 기술통계를 역산하여 유사한 특성의 가상 데이터를 생성합니다. 위 코드에 바로 활용할 수 있습니다.
+      </div>
+      <div>
+        <button class="btn-mockdata" data-idx="${index}" id="mockdata-btn-${index}">
+          🧪 가상 데이터 생성
+        </button>
+        <button class="btn-download" data-idx="${index}" id="download-btn-${index}" style="display:none">
+          📥 CSV 다운로드
+        </button>
+      </div>
+      <div id="mockdata-result-${index}" style="margin-top:10px"></div>
+    </div>
   `;
+}
+
+/* ============================================================
+   가상 데이터 생성 버튼 바인딩
+   ============================================================ */
+
+function bindMockDataButtons() {
+  document.querySelectorAll('.btn-mockdata').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = btn.dataset.idx;
+      handleMockDataGeneration(idx);
+    });
+  });
+}
+
+async function handleMockDataGeneration(idx) {
+  const btn = $(`mockdata-btn-${idx}`);
+  const dlBtn = $(`download-btn-${idx}`);
+  const resultEl = $(`mockdata-result-${idx}`);
+
+  if (!_descriptiveStats || !_descriptiveStats.variables?.length) {
+    resultEl.innerHTML = '<div class="desc-box text-danger">기술통계를 추출하지 못했습니다. 논문에 기술통계표가 포함되어 있는지 확인하세요.</div>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 생성 중...';
+
+  try {
+    // 가상 데이터 생성
+    const { csv, data, variables } = generateMockData(_descriptiveStats);
+    const comparison = computeStats(data, variables);
+
+    // CSV 저장 (다운로드 버튼용)
+    btn._csv = csv;
+    btn._filename = `mock_data_${_descriptiveStats.sample_size || 500}obs.csv`;
+
+    // 비교표 렌더링
+    let tableHtml = `
+      <table class="stats-table">
+        <thead>
+          <tr>
+            <th>변수</th>
+            <th>원본 평균</th>
+            <th>생성 평균</th>
+            <th>원본 SD</th>
+            <th>생성 SD</th>
+            <th>유사도</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    for (const row of comparison) {
+      const meanDiff = row.original_mean
+        ? Math.abs(row.generated_mean - row.original_mean) / Math.max(Math.abs(row.original_mean), 0.01)
+        : 0;
+      const matchClass = meanDiff < 0.1 ? 'match-good' : 'match-ok';
+      const matchText = meanDiff < 0.1 ? '✓ 우수' : '△ 보통';
+
+      tableHtml += `
+        <tr>
+          <td class="var-name">${escapeHtml(row.name_kr)}</td>
+          <td>${row.original_mean ?? '-'}</td>
+          <td>${row.generated_mean}</td>
+          <td>${row.original_sd ?? '-'}</td>
+          <td>${row.generated_sd}</td>
+          <td class="${matchClass}">${matchText}</td>
+        </tr>
+      `;
+    }
+
+    tableHtml += '</tbody></table>';
+
+    resultEl.innerHTML = `
+      <div class="desc-box mb-8">
+        ✅ <b>${data.length}개</b> 관측치 × <b>${variables.length}개</b> 변수의 가상 데이터가 생성되었습니다.
+      </div>
+      <div class="text-xs text-muted mb-6"><b>원본 vs 생성 데이터 기술통계 비교</b></div>
+      <div class="stats-comparison">${tableHtml}</div>
+    `;
+
+    // 다운로드 버튼 표시
+    dlBtn.style.display = 'inline-flex';
+    dlBtn.onclick = () => downloadCSV(btn._csv, btn._filename);
+
+    btn.textContent = '🔄 재생성';
+    btn.disabled = false;
+  } catch (err) {
+    resultEl.innerHTML = `<div class="desc-box text-danger">생성 실패: ${escapeHtml(err.message)}</div>`;
+    btn.textContent = '🧪 가상 데이터 생성';
+    btn.disabled = false;
+  }
 }
 
 /* ============================================================
@@ -258,7 +453,6 @@ function bindLangTabs() {
   document.querySelectorAll('.code-lang-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       const { lang, idx } = tab.dataset;
-      // 같은 인덱스의 언어 탭 토글
       tab.parentElement.querySelectorAll('.code-lang-tab').forEach(t => {
         t.classList.toggle('active', t.dataset.lang === lang);
       });
