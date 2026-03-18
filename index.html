@@ -57,11 +57,34 @@
     <button class="btn-primary" id="run-btn">🚀 도메인 맞춤형 파이프라인 실행</button>
   </section>
 
-  <!-- ===== 로딩 ===== -->
+  <!-- ===== 로딩 (Enhanced) ===== -->
   <section class="card" id="loading-card" style="display:none">
     <div class="loading-wrap">
-      <div class="spinner"></div>
+      <!-- 에이전트 진행 스텝 -->
+      <div class="agent-steps" id="agent-steps">
+        <div class="agent-step" id="step-agent1" data-step="1">
+          <div class="agent-icon">🔍</div>
+          <div class="agent-label">문서 분석</div>
+        </div>
+        <div class="agent-step" id="step-agent2" data-step="2">
+          <div class="agent-icon">📊</div>
+          <div class="agent-label">통계 해석</div>
+        </div>
+        <div class="agent-step" id="step-agent3" data-step="3">
+          <div class="agent-icon">💻</div>
+          <div class="agent-label">코드 생성</div>
+        </div>
+        <div class="agent-step" id="step-agent4" data-step="4">
+          <div class="agent-icon">🧪</div>
+          <div class="agent-label">데이터 생성</div>
+        </div>
+      </div>
+      <!-- 프로그레스 바 -->
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
       <div class="loading-msg" id="loading-msg">파이프라인 준비 중...</div>
+      <div class="loading-tip" id="loading-tip" style="display:none"></div>
     </div>
   </section>
 
