@@ -18,7 +18,9 @@ export const API = {
     agent1: 4000,
     agent2: 2000,
     agent3Meta: 500,
-    agent3Code: 8000,
+    agent3Code: 12000,
+    qna: 2000,
+    interpretation: 3000,
   },
   /** 감지할 최대 방법론 수 */
   maxMethods: 2,

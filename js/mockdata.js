@@ -72,30 +72,39 @@ export async function convertPdfToMarkdown(apiKey, rawText) {
 function buildStatExtractionPrompt(paperText) {
   return `당신은 '기술통계 추출 전문 에이전트'입니다.
 
-아래 논문 텍스트에서 기술통계표(descriptive statistics table)에 해당하는 정보를 찾아 JSON으로 추출하세요.
-각 변수의 평균(mean), 표준편차(sd), 최솟값(min), 최댓값(max), 변수유형(type: continuous/binary/ordinal)을 추출합니다.
+아래 논문 텍스트에서 회귀분석에 사용된 변수들의 기술통계 정보를 찾아 JSON으로 추출하세요.
+
+추출 전략:
+1. Summary Statistics 테이블, Descriptive Statistics 테이블, 또는 본문에서 변수별 평균/표준편차 정보를 찾으세요.
+2. 테이블이 skill type별, 그룹별로 나뉘어 있다면 전체 표본 기준으로 통합하여 추정하세요.
+3. 종속변수, 핵심 독립변수, 통제변수를 모두 포함하세요.
+4. 평균/표준편차가 명시되지 않은 변수는 논문 맥락에서 합리적으로 추정하세요.
+5. 비율(0~1) 변수는 type: "binary", 연속형은 "continuous", 범주형은 "ordinal"로 지정하세요.
 
 논문 텍스트:
 ${paperText}
 
-반드시 순수 JSON만 출력하세요. 첫 글자는 { 이어야 합니다.
+반드시 순수 JSON만 출력하세요. 첫 글자는 { 이어야 합니다. 마크다운 코드블록은 사용하지 마세요.
 
 {
-  "sample_size": 1148,
+  "sample_size": 2190,
+  "data_structure": "패널 데이터 설명 (예: county-year panel, 162 counties × 6 years)",
   "variables": [
     {
       "name_kr": "한국어 변수명",
-      "name_en": "영문 변수명 (코드용, snake_case)",
-      "mean": 1.64,
-      "sd": 0.74,
+      "name_en": "영문 변수명 (snake_case)",
+      "mean": 8.5,
+      "sd": 4.2,
       "min": 0,
-      "max": 5,
+      "max": 30,
       "type": "continuous",
-      "description": "종속변수: 18세 이하 자녀수"
+      "role": "dependent/independent/control/instrument",
+      "description": "변수 설명"
     }
   ],
-  "dependent_var": "영문 종속변수명",
-  "key_independent_var": "영문 핵심 독립변수명"
+  "dependent_var": "종속변수 name_en",
+  "key_independent_var": "핵심 독립변수 name_en",
+  "regression_equation": "논문의 핵심 회귀식을 수식으로 설명"
 }`;
 }
 

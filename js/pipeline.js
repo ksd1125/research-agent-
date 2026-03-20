@@ -51,6 +51,9 @@ export async function runPipeline() {
       }
     }
 
+    // 원본 텍스트 저장 (Q&A용)
+    ui.setPaperText(inputText);
+
     // ===== Agent 1: 문서 분석 =====
     ui.setAgentStep(1);
     ui.setProgress(10);
@@ -119,6 +122,7 @@ export async function runPipeline() {
         raw_name:        m.raw_name,
         evidence:        m.evidence_text,
         target_location: m.target_result_location,
+        source_section:  m.source_section || '',
         standard_name:   statResult.standard_name,
         concept:         statResult.concept,
         why_used:        statResult.why_used,

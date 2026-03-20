@@ -5,6 +5,7 @@
 
 import { escapeHtml, copyToClipboard } from './utils.js';
 import { generateMockData, computeStats, downloadCSV } from './mockdata.js';
+import { runQnA, runInterpretationGuide } from './agents.js';
 
 /* ============================================================
    DOM 요소 캐싱
@@ -203,6 +204,16 @@ export function showPdfError(message) {
    분석 결과 렌더링
    ============================================================ */
 
+/** 분석 결과 전체 저장 (Q&A용) */
+let _analysisData = null;
+
+/** 원본 텍스트 저장 (Q&A용) */
+let _paperText = null;
+
+export function setPaperText(text) {
+  _paperText = text;
+}
+
 /** 변환된 마크다운 저장 (PDF→MD) */
 let _convertedMarkdown = null;
 
@@ -262,6 +273,24 @@ export function renderResult(data) {
     });
   }
 
+  // 섹션 색인 렌더링
+  const sectionIndex = data.section_index || [];
+  const indexEl = $('section-index');
+  if (indexEl && sectionIndex.length > 0) {
+    let indexHtml = '';
+    for (const sec of sectionIndex) {
+      const tables = (sec.key_tables || []).map(t => `<span class="pkg">${escapeHtml(t)}</span>`).join(' ');
+      indexHtml += `
+        <div class="index-item">
+          <div class="index-section">${escapeHtml(sec.section)}</div>
+          <div class="index-summary">${escapeHtml(sec.summary)}</div>
+          ${tables ? `<div class="index-tables">${tables}</div>` : ''}
+        </div>`;
+    }
+    indexEl.innerHTML = indexHtml;
+    indexEl.closest('.card')?.style.setProperty('display', 'block');
+  }
+
   // 방법론 없을 때
   dom.methodNav.innerHTML = '';
   dom.methodBlocks.innerHTML = '';
@@ -274,6 +303,9 @@ export function renderResult(data) {
       </div>`;
     return;
   }
+
+  // 전체 분석 컨텍스트 저장 (Q&A용)
+  _analysisData = data;
 
   // 방법론 탭 + 블록 렌더링
   methods.forEach((m, i) => {
@@ -294,6 +326,8 @@ export function renderResult(data) {
   bindCopyButtons();
   bindLangTabs();
   bindMockDataButtons();
+  bindInterpretationButtons();
+  bindQnA();
 }
 
 /**
@@ -322,7 +356,8 @@ function buildMethodBlockHtml(m, index, ctx) {
     <div class="section">
       <div class="section-title">추출 근거 및 목표 (Agent 1)</div>
       <div class="evidence-box">"${escapeHtml(m.evidence)}"</div>
-      <div class="target-box">🎯 <b>목표 재현 위치:</b> ${escapeHtml(m.target_location)}</div>
+      <div class="target-box">🎯 <b>목표 재현 위치:</b> ${escapeHtml(m.target_location)}
+        ${m.source_section ? `&nbsp;&nbsp;📑 <b>출처 섹션:</b> ${escapeHtml(m.source_section)}` : ''}</div>
     </div>
 
     <div class="section">
@@ -372,6 +407,18 @@ function buildMethodBlockHtml(m, index, ctx) {
         </button>
       </div>
       <div id="mockdata-result-${index}" style="margin-top:10px"></div>
+    </div>
+
+    <!-- 분석 결과 해석 가이드 -->
+    <div class="section interpretation-section">
+      <div class="section-title">📖 분석 결과 해석 가이드</div>
+      <div class="text-xs text-muted mb-8">
+        가상 데이터로 코드를 실행한 후, 결과를 어떻게 읽고 해석해야 하는지 안내합니다.
+      </div>
+      <button class="btn-interpret" data-idx="${index}" id="interpret-btn-${index}">
+        📖 해석 가이드 생성
+      </button>
+      <div id="interpret-result-${index}" style="margin-top:10px"></div>
     </div>
   `;
 }
@@ -511,4 +558,117 @@ function bindCopyButtons() {
       }
     });
   });
+}
+
+/* ============================================================
+   해석 가이드 버튼 바인딩
+   ============================================================ */
+
+function bindInterpretationButtons() {
+  document.querySelectorAll('.btn-interpret').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const idx = parseInt(btn.dataset.idx);
+      const resultEl = $(`interpret-result-${idx}`);
+      const apiKey = dom.apiKey.value.trim();
+
+      if (!apiKey) { resultEl.innerHTML = '<div class="desc-box text-danger">API 키를 입력해주세요.</div>'; return; }
+      if (!_analysisData?.methods?.[idx]) return;
+
+      btn.disabled = true;
+      btn.textContent = '⏳ 생성 중...';
+
+      try {
+        const method = _analysisData.methods[idx];
+        const ctx = _analysisData.paper_context || {};
+        const guide = await runInterpretationGuide(apiKey, method, ctx, method.target_location);
+
+        // 마크다운을 간단한 HTML로 변환
+        const html = simpleMarkdownToHtml(guide);
+        resultEl.innerHTML = `<div class="interpret-guide">${html}</div>`;
+
+        btn.textContent = '🔄 재생성';
+        btn.disabled = false;
+      } catch (err) {
+        resultEl.innerHTML = `<div class="desc-box text-danger">생성 실패: ${escapeHtml(err.message)}</div>`;
+        btn.textContent = '📖 해석 가이드 생성';
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+/* ============================================================
+   대화형 Q&A 바인딩
+   ============================================================ */
+
+function bindQnA() {
+  const sendBtn = $('qna-send');
+  const input = $('qna-input');
+  const chatArea = $('qna-chat');
+
+  if (!sendBtn || !input || !chatArea) return;
+
+  // Q&A 영역 표시
+  const qnaCard = sendBtn.closest('.card');
+  if (qnaCard) qnaCard.style.display = 'block';
+
+  const handleSend = async () => {
+    const question = input.value.trim();
+    const apiKey = dom.apiKey.value.trim();
+    if (!question || !apiKey) return;
+
+    // 사용자 질문 표시
+    chatArea.innerHTML += `<div class="qna-msg qna-user"><b>Q:</b> ${escapeHtml(question)}</div>`;
+    input.value = '';
+
+    // 로딩 표시
+    const loadingId = `qna-loading-${Date.now()}`;
+    chatArea.innerHTML += `<div class="qna-msg qna-loading" id="${loadingId}">💬 답변 생성 중...</div>`;
+    chatArea.scrollTop = chatArea.scrollHeight;
+
+    try {
+      const ctx = _analysisData?.paper_context || {};
+      const text = _paperText || '';
+      const answer = await runQnA(apiKey, question, text, ctx);
+
+      const loadingEl = $(loadingId);
+      if (loadingEl) loadingEl.remove();
+
+      chatArea.innerHTML += `<div class="qna-msg qna-bot"><b>A:</b> ${simpleMarkdownToHtml(answer)}</div>`;
+    } catch (err) {
+      const loadingEl = $(loadingId);
+      if (loadingEl) loadingEl.remove();
+      chatArea.innerHTML += `<div class="qna-msg qna-bot text-danger">오류: ${escapeHtml(err.message)}</div>`;
+    }
+
+    chatArea.scrollTop = chatArea.scrollHeight;
+  };
+
+  sendBtn.addEventListener('click', handleSend);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  });
+}
+
+/* ============================================================
+   간이 마크다운 → HTML 변환
+   ============================================================ */
+
+function simpleMarkdownToHtml(md) {
+  return md
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^# (.+)$/gm, '<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>')
+    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+    .replace(/<\/ul>\s*<ul>/g, '')
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n/g, '<br>');
 }

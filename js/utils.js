@@ -85,16 +85,35 @@ function repairBrackets(json) {
  * @returns {{ python: string, r: string }}
  */
 export function extractCode(raw) {
-  const pyMatch = raw.match(/===PYTHON===([\s\S]*?)===R===/i);
-  const rMatch  = raw.match(/===R===([\s\S]*?)===END===/i);
+  // 1차: ===PYTHON=== ... ===R=== ... ===END=== 구분자 파싱
+  const pyMatch = raw.match(/===\s*PYTHON\s*===([\s\S]*?)===\s*R\s*===/i);
+  const rMatch  = raw.match(/===\s*R\s*===([\s\S]*?)===\s*END\s*===/i);
 
-  let python = pyMatch
-    ? pyMatch[1].trim()
-    : (raw.match(/```(?:python)?\s*([\s\S]*?)```/i) || [])[1] || '';
+  let python = pyMatch ? pyMatch[1].trim() : '';
+  let r      = rMatch  ? rMatch[1].trim()  : '';
 
-  let r = rMatch
-    ? rMatch[1].trim()
-    : (raw.match(/```(?:r|R)\s*([\s\S]*?)```/i) || [])[1] || '';
+  // 2차 폴백: 마크다운 코드블록 ```python ... ``` / ```r ... ```
+  if (!python) {
+    const pyBlocks = [...raw.matchAll(/```python\s*([\s\S]*?)```/gi)];
+    if (pyBlocks.length > 0) python = pyBlocks.map(m => m[1].trim()).join('\n\n');
+  }
+  if (!r) {
+    const rBlocks = [...raw.matchAll(/```r\s*([\s\S]*?)```/gi)];
+    if (rBlocks.length > 0) r = rBlocks.map(m => m[1].trim()).join('\n\n');
+  }
+
+  // 3차 폴백: 일반 코드블록에서 Python/R 키워드로 추정
+  if (!python && !r) {
+    const generalBlocks = [...raw.matchAll(/```\s*([\s\S]*?)```/g)];
+    for (const block of generalBlocks) {
+      const code = block[1].trim();
+      if (!python && (code.includes('import ') || code.includes('pandas') || code.includes('def '))) {
+        python = code;
+      } else if (!r && (code.includes('library(') || code.includes('<-') || code.includes('lm('))) {
+        r = code;
+      }
+    }
+  }
 
   // 남은 백틱 제거
   python = python.replace(/```/g, '').trim();
