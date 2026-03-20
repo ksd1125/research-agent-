@@ -91,11 +91,12 @@ const TIPS = [
 let tipInterval = null;
 
 /**
- * 에이전트 스텝 활성화 (1~4)
- * @param {number} step — 현재 활성 에이전트 번호
+ * 에이전트 스텝 활성화 (0=전처리, 1~4=에이전트)
+ * @param {number} step — 현재 활성 단계 (0: PDF→MD, 1~4: 에이전트)
  */
 export function setAgentStep(step) {
-  for (let i = 1; i <= 4; i++) {
+  // step 0 = 전처리(PDF→MD), step 1~4 = 에이전트
+  for (let i = 0; i <= 4; i++) {
     const el = $(`step-agent${i}`);
     if (!el) continue;
     el.classList.remove('active', 'done');
@@ -202,6 +203,17 @@ export function showPdfError(message) {
    분석 결과 렌더링
    ============================================================ */
 
+/** 변환된 마크다운 저장 (PDF→MD) */
+let _convertedMarkdown = null;
+
+export function setConvertedMarkdown(md) {
+  _convertedMarkdown = md;
+}
+
+export function getConvertedMarkdown() {
+  return _convertedMarkdown;
+}
+
 /** 저장된 기술통계 (가상 데이터 생성용) */
 let _descriptiveStats = null;
 
@@ -227,7 +239,28 @@ export function renderResult(data) {
   if (ctx.domain)               ctxHtml += `<div class="context-tag">분야: ${escapeHtml(ctx.domain)}</div>`;
   if (ctx.research_type)        ctxHtml += `<div class="context-tag">유형: ${escapeHtml(ctx.research_type)}</div>`;
   if (ctx.data_characteristics) ctxHtml += `<div class="context-tag">데이터: ${escapeHtml(ctx.data_characteristics)}</div>`;
+  // PDF→MD 변환 결과가 있으면 다운로드 버튼 추가
+  if (_convertedMarkdown) {
+    ctxHtml += `<button class="context-tag btn-md-download" id="btn-md-download" style="cursor:pointer;background:var(--color-primary);color:#fff;border:none">📄 구조화 MD 다운로드</button>`;
+  }
   dom.contextTags.innerHTML = ctxHtml;
+
+  // MD 다운로드 버튼 바인딩
+  const mdBtn = $('btn-md-download');
+  if (mdBtn && _convertedMarkdown) {
+    mdBtn.addEventListener('click', () => {
+      const bom = '\uFEFF';
+      const blob = new Blob([bom + _convertedMarkdown], { type: 'text/markdown;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(meta.title || 'paper').replace(/[^a-zA-Z0-9가-힣]/g, '_')}_structured.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  }
 
   // 방법론 없을 때
   dom.methodNav.innerHTML = '';

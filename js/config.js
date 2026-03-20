@@ -37,6 +37,7 @@ export const MESSAGES = {
   },
   loading: {
     init:    '파이프라인 준비 중...',
+    pdfToMd: '<b>[전처리: PDF → Markdown]</b><br>PDF 원시 텍스트를 구조화된 마크다운으로 변환 중입니다...',
     agent1:  '<b>[Agent 1: 문서 분석기]</b><br>논문의 학문 분야와 데이터 구조를 파악 중입니다...',
     agent2:  (i, total, domain, method) =>
       `<b>[Agent 2: 통계 분석기]</b> (${i}/${total})<br>'${domain}' 관점에서 '${method}' 방법론을 해석 중입니다...`,

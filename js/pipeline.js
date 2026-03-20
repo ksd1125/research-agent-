@@ -1,18 +1,20 @@
 /**
  * pipeline.js — 멀티 에이전트 파이프라인 오케스트레이션
  * ResearchMethodAgent v4.0
+ *
+ * PDF → MD 변환 → Agent 1 (문서 분석) → Agent 2 (통계 해석)
+ * → Agent 3 (코드 생성) → Agent 4 (기술통계 추출)
  */
 
 import { MESSAGES } from './config.js';
 import { escapeHtml, extractCode } from './utils.js';
 import { runAgent1, runAgent2, runAgent3 } from './agents.js';
 import { getExtractedText } from './pdf.js';
-import { extractDescriptiveStats } from './mockdata.js';
+import { convertPdfToMarkdown, extractDescriptiveStats } from './mockdata.js';
 import * as ui from './ui.js';
 
 /**
  * 파이프라인 실행
- * Agent 1 (문서 분석) → Agent 2 (통계 해석) → Agent 3 (코드 생성) → Agent 4 (기술통계 추출)
  */
 export async function runPipeline() {
   const apiKey = ui.dom.apiKey.value.trim();
@@ -24,20 +26,39 @@ export async function runPipeline() {
   if (currentTab === 'pdf' && !getExtractedText()) { ui.showStatus(MESSAGES.errors.noPdfText);   return; }
   if (currentTab === 'text' && !textInput)   { ui.showStatus(MESSAGES.errors.noTextInput); return; }
 
-  const inputText = currentTab === 'pdf' ? getExtractedText() : textInput;
+  const rawInput = currentTab === 'pdf' ? getExtractedText() : textInput;
 
   // ===== UI: 로딩 시작 =====
   ui.showLoadingView();
 
   try {
+    // ===== Step 0: PDF → Markdown 변환 (PDF 탭인 경우) =====
+    let inputText = rawInput;
+
+    if (currentTab === 'pdf') {
+      ui.setAgentStep(0);
+      ui.setProgress(2);
+      ui.setLoading(MESSAGES.loading.pdfToMd);
+
+      try {
+        inputText = await convertPdfToMarkdown(apiKey, rawInput);
+        // 변환된 MD를 UI에 저장 (나중에 다운로드 가능)
+        ui.setConvertedMarkdown(inputText);
+      } catch (err) {
+        // MD 변환 실패 시 원본 텍스트로 진행
+        console.warn('PDF→MD 변환 실패, 원본 텍스트 사용:', err.message);
+        inputText = rawInput;
+      }
+    }
+
     // ===== Agent 1: 문서 분석 =====
     ui.setAgentStep(1);
-    ui.setProgress(5);
+    ui.setProgress(10);
     ui.setLoading(MESSAGES.loading.agent1);
     const docResult = await runAgent1(apiKey, inputText);
     const paperContext = docResult.paper_context || {};
     const methods = (docResult.detected_methods || []).slice(0, 2);
-    ui.setProgress(20);
+    ui.setProgress(25);
 
     // 방법론 미감지 시
     if (methods.length === 0) {
@@ -50,13 +71,13 @@ export async function runPipeline() {
 
     // ===== Agent 2 + 3: 각 방법론에 대해 순차 실행 =====
     const finalMethods = [];
-    const progressPerMethod = 50 / methods.length; // Agent 2+3이 전체의 약 50% 차지
+    const progressPerMethod = 45 / methods.length;
 
     for (let i = 0; i < methods.length; i++) {
       const m = methods[i];
       const idx = i + 1;
       const total = methods.length;
-      const baseProgress = 20 + (i * progressPerMethod);
+      const baseProgress = 25 + (i * progressPerMethod);
 
       // Agent 2: 통계 분석
       ui.setAgentStep(2);
@@ -110,7 +131,7 @@ export async function runPipeline() {
 
     // ===== Agent 4: 기술통계 추출 (가상 데이터 준비) =====
     ui.setAgentStep(4);
-    ui.setProgress(75);
+    ui.setProgress(78);
     ui.setLoading(MESSAGES.loading.agent4);
 
     try {
