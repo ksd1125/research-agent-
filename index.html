@@ -99,8 +99,27 @@
       <div class="paper-meta" id="r-meta">—</div>
       <div class="context-tags" id="r-context"></div>
     </div>
+
+    <!-- 섹션 색인 -->
+    <section class="card" style="display:none">
+      <div class="card-title">📑 논문 구조 색인</div>
+      <div id="section-index" class="section-index-wrap"></div>
+    </section>
+
     <div class="method-nav" id="method-nav"></div>
     <div id="method-blocks"></div>
+
+    <!-- 대화형 Q&A -->
+    <section class="card" id="qna-card" style="display:none">
+      <div class="card-title">💬 논문 Q&A</div>
+      <div class="text-xs text-muted mb-8">분석 방법이나 결과에 대해 질문하면 논문 맥락 기반으로 답변합니다.</div>
+      <div id="qna-chat" class="qna-chat"></div>
+      <div class="qna-input-wrap">
+        <input type="text" id="qna-input" class="qna-input" placeholder="예: Bartik 도구변수가 왜 필요한가요?">
+        <button id="qna-send" class="btn-primary qna-send-btn">전송</button>
+      </div>
+    </section>
+
     <button class="home-link">← 새 논문 분석하기</button>
   </div>
 
