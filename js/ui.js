@@ -154,6 +154,7 @@ function showRandomTip() {
 export function showLoadingView() {
   hideStatus();
   dom.runBtn.disabled = true;
+  dom.configCard.style.display = 'none';
   dom.inputCard.style.display = 'none';
   dom.loadingCard.style.display = 'block';
   // 초기화
@@ -164,6 +165,7 @@ export function showLoadingView() {
 
 export function showInputView() {
   dom.loadingCard.style.display = 'none';
+  dom.configCard.style.display = 'block';
   dom.inputCard.style.display = 'block';
   dom.runBtn.disabled = false;
   stopTipRotation();
@@ -658,17 +660,27 @@ function bindQnA() {
    ============================================================ */
 
 function simpleMarkdownToHtml(md) {
-  return md
+  // 1단계: 인라인 서식 변환
+  let html = md
     .replace(/^### (.+)$/gm, '<h4>$1</h4>')
     .replace(/^## (.+)$/gm, '<h3>$1</h3>')
     .replace(/^# (.+)$/gm, '<h3>$1</h3>')
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/`(.+?)`/g, '<code>$1</code>');
+
+  // 2단계: 리스트 변환 — 연속된 리스트 아이템을 그룹으로 묶기
+  html = html
     .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>')
-    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
-    .replace(/<\/ul>\s*<ul>/g, '')
+    .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
+
+  // 연속된 <li>를 <ul>로 감싸기 (비연속 리스트는 별도 <ul>)
+  html = html.replace(/((?:<li>.*?<\/li>\s*)+)/g, '<ul>$1</ul>');
+
+  // 3단계: 줄바꿈
+  html = html
     .replace(/\n\n/g, '<br><br>')
     .replace(/\n/g, '<br>');
+
+  return html;
 }

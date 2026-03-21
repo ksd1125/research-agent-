@@ -50,8 +50,20 @@ export async function extractTextFromPDF(file, onProgress) {
       onProgress(`📖 텍스트 추출 중... (${p}/${totalPages} 페이지)`);
       const page = await pdf.getPage(p);
       const content = await page.getTextContent();
-      const pageText = content.items.map(item => item.str).join(' ');
-      allText += pageText + '\n\n';
+      // 텍스트 아이템 간 위치 차이로 줄바꿈/공백 판단
+      let pageText = '';
+      let lastY = null;
+      for (const item of content.items) {
+        if (lastY !== null && Math.abs(item.transform[5] - lastY) > 2) {
+          // Y좌표가 달라지면 줄바꿈
+          pageText += '\n';
+        } else if (pageText.length > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
+          pageText += ' ';
+        }
+        pageText += item.str;
+        lastY = item.transform[5];
+      }
+      allText += pageText.trim() + '\n\n';
     }
 
     extractedText = allText.trim();
@@ -68,7 +80,7 @@ export async function extractTextFromPDF(file, onProgress) {
     return { text: extractedText, pages: totalPages };
   } catch (err) {
     extractedText = null;
-    throw new Error(err.message || `텍스트 추출 실패: ${err.message}`);
+    throw new Error(err.message || '텍스트 추출에 실패했습니다. 파일을 확인해주세요.');
   }
 }
 

@@ -8,7 +8,7 @@
 
 import { MESSAGES } from './config.js';
 import { escapeHtml, extractCode } from './utils.js';
-import { runAgent1, runAgent2, runAgent3 } from './agents.js';
+import { runAgent1, runAgent2, runAgent3, createAbortController, abortPipeline } from './agents.js';
 import { getExtractedText } from './pdf.js';
 import { convertPdfToMarkdown, extractDescriptiveStats } from './mockdata.js';
 import * as ui from './ui.js';
@@ -29,6 +29,7 @@ export async function runPipeline() {
   const rawInput = currentTab === 'pdf' ? getExtractedText() : textInput;
 
   // ===== UI: 로딩 시작 =====
+  createAbortController();
   ui.showLoadingView();
 
   try {

@@ -6,6 +6,7 @@
 import * as ui from './ui.js';
 import { extractTextFromPDF, initDropZone, resetExtractedText } from './pdf.js';
 import { runPipeline } from './pipeline.js';
+import { abortPipeline } from './agents.js';
 
 /**
  * 앱 초기화
@@ -20,6 +21,16 @@ function init() {
 
   // 실행 버튼
   ui.dom.runBtn.addEventListener('click', runPipeline);
+
+  // 취소 버튼
+  const cancelBtn = document.getElementById('cancel-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      abortPipeline();
+      ui.showInputView();
+      ui.showStatus('분석이 취소되었습니다.');
+    });
+  }
 
   // 새 분석 (결과 화면 → 초기화)
   document.addEventListener('click', (e) => {

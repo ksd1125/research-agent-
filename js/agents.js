@@ -10,6 +10,28 @@ import { safeParseJSON } from './utils.js';
    Gemini API 호출
    ============================================================ */
 
+/** 현재 파이프라인의 AbortController (취소 기능용) */
+let _abortController = null;
+
+/**
+ * 새 AbortController 생성 (파이프라인 시작 시 호출)
+ * @returns {AbortController}
+ */
+export function createAbortController() {
+  _abortController = new AbortController();
+  return _abortController;
+}
+
+/**
+ * 현재 파이프라인 취소
+ */
+export function abortPipeline() {
+  if (_abortController) {
+    _abortController.abort();
+    _abortController = null;
+  }
+}
+
 /**
  * Gemini API에 프롬프트 전송
  * @param {string} apiKey
@@ -22,17 +44,31 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000) {
 
   const url = `${API.baseUrl}/${API.defaultModel}:generateContent?key=${apiKey}`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: API.defaultTemp,
-        maxOutputTokens: maxTokens,
-      },
-    }),
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: API.defaultTemp,
+          maxOutputTokens: maxTokens,
+        },
+      }),
+      signal: _abortController?.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('파이프라인이 취소되었습니다.');
+    throw new Error(`네트워크 오류: ${err.message}`);
+  }
+
+  if (!response.ok) {
+    const status = response.status;
+    if (status === 429) throw new Error('API 호출 한도 초과 — 잠시 후 다시 시도해주세요.');
+    if (status === 401 || status === 403) throw new Error('API 키가 유효하지 않습니다. 키를 확인해주세요.');
+    throw new Error(`API 오류 (HTTP ${status}): ${response.statusText}`);
+  }
 
   const data = await response.json();
   if (data.error) throw new Error(data.error.message);
