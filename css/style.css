@@ -325,6 +325,28 @@ textarea {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ----- Cancel Button ----- */
+.btn-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-danger);
+  background: var(--color-surface);
+  color: var(--color-danger);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+  margin-top: 12px;
+}
+.btn-cancel:hover {
+  background: var(--color-danger);
+  color: #FFF;
+}
+
 /* ----- Status Message ----- */
 .status-msg {
   display: none;
