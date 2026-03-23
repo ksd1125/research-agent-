@@ -855,6 +855,51 @@ pre {
   border-radius: var(--radius-sm) !important;
 }
 
+/* ----- Result Tab Bar ----- */
+.result-tab-bar {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.result-tab-bar::-webkit-scrollbar { display: none; }
+
+.result-tab {
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--color-border);
+  cursor: pointer;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  transition: all var(--transition);
+  user-select: none;
+  white-space: nowrap;
+  font-family: inherit;
+  font-weight: 500;
+}
+.result-tab:hover {
+  background: #F0F4FA;
+}
+.result-tab.active {
+  background: var(--color-primary);
+  color: #FFF;
+  border-color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ----- Result Panels ----- */
+.result-panel {
+  display: none;
+  animation: fadeInUp 0.3s ease;
+}
+.result-panel.active {
+  display: block;
+}
+
 /* ----- Utility ----- */
 .hidden { display: none !important; }
 .mb-8 { margin-bottom: 8px; }
