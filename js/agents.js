@@ -213,8 +213,14 @@ function buildAgent3MetaPrompt(standardName, paperContext) {
 {"packages":{"python":["pandas","numpy"],"r":["dplyr","fixest"]}}`;
 }
 
-function buildAgent3CodePrompt(standardName, steps, paperContext, targetLocation) {
-  return `당신은 데이터 분석 전문가입니다. Python 코드와 R 코드를 각각 작성하세요.
+function buildAgent3SingleLangPrompt(lang, standardName, steps, paperContext, targetLocation) {
+  const langConfig = lang === 'python'
+    ? { name: 'Python', libs: 'pandas, numpy, statsmodels, linearmodels, scipy 등', dataGen: 'numpy/pandas' }
+    : { name: 'R', libs: 'fixest, plm, AER, dplyr, tidyr 등', dataGen: 'base R / dplyr' };
+
+  return `당신은 ${langConfig.name} 데이터 분석 전문가입니다.
+아래 정보를 바탕으로 ${langConfig.name} 코드 하나만 작성하세요.
+코드 외의 설명은 일절 쓰지 마세요. 순수 ${langConfig.name} 코드만 출력하세요.
 
 [방법론]: ${standardName}
 [학문 분야]: ${paperContext.domain || '사회과학'}
@@ -224,32 +230,39 @@ function buildAgent3CodePrompt(standardName, steps, paperContext, targetLocation
 [분석 절차]: ${JSON.stringify(steps)}
 
 코드 작성 조건:
-1. Mock 데이터 생성: 논문의 데이터 구조를 모방한 가상 데이터를 numpy/pandas로 생성하세요.
-   - 변수명은 논문 맥락에 맞는 영문 snake_case로 지정
+1. Mock 데이터 생성: 논문의 데이터 구조를 모방한 가상 데이터를 ${langConfig.dataGen}로 생성
+   - 변수명은 논문 맥락에 맞는 영문 snake_case
    - 종속변수, 독립변수, 통제변수를 모두 포함
    - 패널/횡단면/시계열 등 데이터 구조를 반영
 2. 분석 절차의 모든 단계를 순서대로 구현
 3. 결과 출력은 ${targetLocation}와 유사한 테이블 형태로 출력
 4. 한국어 주석으로 각 단계를 설명
-5. Python은 pandas, numpy, statsmodels, linearmodels 등 사용
-6. R은 fixest, plm, AER 등 사용
+5. ${langConfig.libs} 사용
+6. 코드는 복사해서 바로 실행 가능해야 함 (import/library 포함)
 
-중요: 반드시 아래 구분자 형식을 정확히 지켜주세요. 다른 형식은 파싱 불가합니다:
-
-===PYTHON===
-(여기에 Python 코드만)
-===R===
-(여기에 R 코드만)
-===END===`;
+${langConfig.name} 코드만 출력하세요:`;
 }
 
 /**
- * Agent 3 실행 — 패키지 목록 + 코드 생성
+ * 코드 응답에서 순수 코드만 추출 (마크다운 코드블록 제거)
+ */
+function cleanCodeResponse(raw, lang) {
+  let code = raw.trim();
+  // ```python ... ``` 또는 ```r ... ``` 제거
+  const blockMatch = code.match(new RegExp('```(?:' + lang + ')?\\s*([\\s\\S]*?)```', 'i'));
+  if (blockMatch) code = blockMatch[1].trim();
+  // 남은 ``` 제거
+  code = code.replace(/```/g, '').trim();
+  return code || `# ${lang} 코드 생성 실패 — 재시도해주세요`;
+}
+
+/**
+ * Agent 3 실행 — 패키지 목록 + Python/R 코드 개별 생성
  * @param {string} apiKey
  * @param {Object} statResult — Agent 2 결과
  * @param {Object} paperContext
  * @param {string} targetLocation
- * @returns {Promise<{ packages: Object, python: string, r: string }>}
+ * @returns {Promise<{ packages: Object, pythonCode: string, rCode: string }>}
  */
 export async function runAgent3(apiKey, statResult, paperContext, targetLocation) {
   // 3-1: 패키지 목록 (실패해도 계속 진행)
@@ -264,15 +277,33 @@ export async function runAgent3(apiKey, statResult, paperContext, targetLocation
     packages = metaResult.packages || packages;
   } catch { /* 패키지 파싱 실패는 무시 */ }
 
-  // 3-2: 코드 생성
-  const codeRaw = await callGemini(
-    apiKey,
-    buildAgent3CodePrompt(statResult.standard_name, statResult.steps, paperContext, targetLocation),
-    API.tokens.agent3Code
-  );
+  // 3-2: Python 코드 생성
+  let pythonCode = '# Python 코드 생성 실패 — 재시도해주세요';
+  try {
+    const pyRaw = await callGemini(
+      apiKey,
+      buildAgent3SingleLangPrompt('python', statResult.standard_name, statResult.steps, paperContext, targetLocation),
+      API.tokens.agent3Code
+    );
+    pythonCode = cleanCodeResponse(pyRaw, 'python');
+  } catch (err) {
+    pythonCode = `# Python 코드 생성 실패\n# 오류: ${err.message}`;
+  }
 
-  // 코드 추출은 utils의 extractCode 사용 (main에서 처리)
-  return { packages, codeRaw };
+  // 3-3: R 코드 생성
+  let rCode = '# R 코드 생성 실패 — 재시도해주세요';
+  try {
+    const rRaw = await callGemini(
+      apiKey,
+      buildAgent3SingleLangPrompt('r', statResult.standard_name, statResult.steps, paperContext, targetLocation),
+      API.tokens.agent3Code
+    );
+    rCode = cleanCodeResponse(rRaw, 'r');
+  } catch (err) {
+    rCode = `# R 코드 생성 실패\n# 오류: ${err.message}`;
+  }
+
+  return { packages, pythonCode, rCode };
 }
 
 /* ============================================================
@@ -288,7 +319,7 @@ export async function runAgent3(apiKey, statResult, paperContext, targetLocation
  * @returns {Promise<string>} — 답변 텍스트
  */
 export async function runQnA(apiKey, question, paperText, paperContext) {
-  const prompt = `당신은 학술 논문 해석 전문가입니다. 아래 논문을 기반으로 질문에 답변하세요.
+  const prompt = `당신은 학술 논문 분석 및 실험 설계 전문가입니다. 아래 논문을 기반으로 질문에 답변하세요.
 
 [논문 분야]: ${paperContext.domain || '사회과학'}
 [연구 유형]: ${paperContext.research_type || '실증 연구'}
@@ -304,9 +335,23 @@ ${paperText.substring(0, 20000)}
 2. 관련 테이블이나 섹션이 있으면 "→ Table X 참조", "→ Section Y 참조" 형태로 출처를 표기.
 3. 통계 방법론에 대한 질문이면 쉬운 말로 설명 후 수식이나 예시를 포함.
 4. 한국어로 답변하세요. 학술 용어는 영문을 병기(괄호).
-5. 답변은 3~5문장으로 간결하게 작성.`;
 
-  return await callGemini(apiKey, prompt, 2000);
+**What-if 시나리오 지원:**
+- 사용자가 "만약 ~을 제거하면?" 또는 "~을 추가하면?" 같은 가정 질문을 하면:
+  a) 해당 변경이 모델에 미치는 통계적 영향을 설명 (예: 내생성 문제, 편향 방향)
+  b) 예상되는 계수 변화 방향과 이유를 설명
+  c) 실제 코드에서 어떤 부분을 수정해야 하는지 간단한 코드 스니펫 제시
+
+**아이디어 실험 지원:**
+- 사용자가 새로운 연구 아이디어를 제안하면:
+  a) 논문의 기존 프레임워크 내에서 실현 가능성을 평가
+  b) 필요한 추가 변수나 데이터 설명
+  c) 예상 결과와 해석 방향을 제시
+  d) 구현을 위한 코드 수정 방향을 안내
+
+답변은 체계적이되 간결하게 (5~10문장) 작성하세요.`;
+
+  return await callGemini(apiKey, prompt, API.tokens.qna);
 }
 
 /* ============================================================
@@ -324,29 +369,41 @@ ${paperText.substring(0, 20000)}
 export async function runInterpretationGuide(apiKey, methodResult, paperContext, targetLocation) {
   const prompt = `당신은 통계 분석 교육 전문가입니다.
 
-학생이 논문의 분석을 가상 데이터로 재현하려 합니다. 실행 결과를 어떻게 해석해야 하는지 가이드를 작성하세요.
+학생이 논문의 "${targetLocation}" 결과를 가상 데이터로 재현했습니다.
+이 학생이 결과를 단계별로 이해할 수 있도록, **논문의 실제 결과 구조를 기반으로** 구체적인 해석 가이드를 작성하세요.
 
 [방법론]: ${methodResult.standard_name}
 [논문 분야]: ${paperContext.domain || '사회과학'}
 [데이터 특성]: ${paperContext.data_characteristics || '패널 데이터'}
-[목표 재현 결과]: ${targetLocation}
+[목표 결과]: ${targetLocation}
 [분석 절차]: ${JSON.stringify(methodResult.steps)}
 
-아래 형식으로 한국어 가이드를 작성하세요:
+아래 5단계로 한국어 가이드를 작성하세요. **일반론이 아닌 이 논문에 특화된 내용**으로 작성하세요:
 
-## 코드 실행 후 확인할 사항
-1. (결과 테이블에서 확인해야 할 핵심 수치와 그 의미)
+## Step 1: 결과 테이블 구조 파악
+- ${targetLocation}의 열(column)과 행(row) 구조 설명
+- 각 열이 의미하는 모델 사양(specification) 설명
+- "Model (1)은 ~, Model (2)는 ~를 추가한 것" 형태로 구체적 설명
 
-## 계수(coefficient) 해석법
-- (각 핵심 변수의 계수가 의미하는 것)
-- (통계적 유의성 확인 방법: p-value, t-stat 등)
+## Step 2: 핵심 계수(coefficient) 읽기
+- 종속변수가 무엇이고, 핵심 독립변수의 계수가 의미하는 것
+- "계수 β = X.XX는 [독립변수]가 1단위 증가할 때 [종속변수]가 X.XX만큼 변화함을 의미"
+- 괄호 안의 표준오차(SE)와 별표(*)의 유의수준 해석법
 
-## 가상 데이터 vs 원본 차이점
-- (가상 데이터로 재현 시 원본과 다를 수 있는 점)
-- (주의할 한계점)
+## Step 3: 가상 데이터로 테이블/그래프/문서 만들기
+- 코드 실행 결과를 논문의 ${targetLocation}과 같은 형태의 테이블로 정리하는 방법
+- 주요 결과를 시각화하는 그래프(bar chart, scatter plot 등) 제작 가이드
+- 결과를 학술 문서 스타일로 기술하는 방법 (예: "분석 결과, X는 Y에 유의한 양의 영향을 미쳤다(β=..., p<...)")
 
-## 실습 과제
-1. (학생이 스스로 시도해볼 수 있는 추가 분석 과제 2~3개)`;
+## Step 4: 원본 논문 결과와 비교 해석
+- 가상 데이터 결과가 원본과 다를 수 있는 이유 (데이터 생성 한계)
+- 부호(방향), 크기(magnitude), 유의성 중 무엇을 비교해야 하는지
+- "결과가 다르다고 실패가 아니다 — 방법론의 원리를 이해하는 것이 목표"
 
-  return await callGemini(apiKey, prompt, 3000);
+## Step 5: 심화 실습 과제
+1. 통제변수를 하나씩 제거하며 계수 변화 관찰 (민감도 분석)
+2. 표본을 하위집단으로 나누어 이질적 효과 확인
+3. 다른 추정 방법(OLS vs IV 등)으로 결과 비교`;
+
+  return await callGemini(apiKey, prompt, API.tokens.interpretation);
 }

@@ -235,7 +235,7 @@ export function setDescriptiveStats(stats) {
 }
 
 /**
- * 분석 결과 전체 렌더링
+ * 분석 결과 전체 렌더링 — 탭 패널 방식
  * @param {Object} data — 최종 분석 결과 객체
  */
 export function renderResult(data) {
@@ -252,7 +252,6 @@ export function renderResult(data) {
   if (ctx.domain)               ctxHtml += `<div class="context-tag">분야: ${escapeHtml(ctx.domain)}</div>`;
   if (ctx.research_type)        ctxHtml += `<div class="context-tag">유형: ${escapeHtml(ctx.research_type)}</div>`;
   if (ctx.data_characteristics) ctxHtml += `<div class="context-tag">데이터: ${escapeHtml(ctx.data_characteristics)}</div>`;
-  // PDF→MD 변환 결과가 있으면 다운로드 버튼 추가
   if (_convertedMarkdown) {
     ctxHtml += `<button class="context-tag btn-md-download" id="btn-md-download" style="cursor:pointer;background:var(--color-primary);color:#fff;border:none">📄 구조화 MD 다운로드</button>`;
   }
@@ -275,7 +274,7 @@ export function renderResult(data) {
     });
   }
 
-  // 섹션 색인 렌더링
+  // ── 패널 1: 개요 (섹션 색인) ──
   const sectionIndex = data.section_index || [];
   const indexEl = $('section-index');
   if (indexEl && sectionIndex.length > 0) {
@@ -290,26 +289,37 @@ export function renderResult(data) {
         </div>`;
     }
     indexEl.innerHTML = indexHtml;
-    indexEl.closest('.card')?.style.setProperty('display', 'block');
   }
 
   // 방법론 없을 때
   dom.methodNav.innerHTML = '';
-  dom.methodBlocks.innerHTML = '';
+  const analysisBlocks = $('analysis-blocks');
+  const codeBlocks = $('code-blocks');
+  const dataBlocks = $('data-blocks');
+  const interpretBlocks = $('interpret-blocks');
+
+  if (analysisBlocks) analysisBlocks.innerHTML = '';
+  if (codeBlocks) codeBlocks.innerHTML = '';
+  if (dataBlocks) dataBlocks.innerHTML = '';
+  if (interpretBlocks) interpretBlocks.innerHTML = '';
 
   if (methods.length === 0) {
-    dom.methodBlocks.innerHTML = `
-      <div class="desc-box text-danger">
-        방법론을 감지하지 못했습니다. 논문의 분석 방법 섹션이 포함된 텍스트를 붙여넣으세요.
-        ${data._debug ? '<br><br>' + escapeHtml(data._debug) : ''}
-      </div>`;
+    if (analysisBlocks) {
+      analysisBlocks.innerHTML = `
+        <div class="desc-box text-danger">
+          방법론을 감지하지 못했습니다. 논문의 분석 방법 섹션이 포함된 텍스트를 붙여넣으세요.
+          ${data._debug ? '<br><br>' + escapeHtml(data._debug) : ''}
+        </div>`;
+    }
+    bindResultTabs();
+    bindQnA();
     return;
   }
 
   // 전체 분석 컨텍스트 저장 (Q&A용)
   _analysisData = data;
 
-  // 방법론 탭 + 블록 렌더링
+  // 방법론 선택 탭 (분석/코드/데이터/해석에서 공유)
   methods.forEach((m, i) => {
     const btn = document.createElement('button');
     btn.className = `method-nav-btn${i === 0 ? ' active' : ''}`;
@@ -317,14 +327,51 @@ export function renderResult(data) {
     btn.dataset.idx = i;
     btn.addEventListener('click', () => switchMethod(i));
     dom.methodNav.appendChild(btn);
-
-    const block = document.createElement('div');
-    block.className = `card method-block${i === 0 ? ' active' : ''}`;
-    block.id = `mblock-${i}`;
-    block.innerHTML = buildMethodBlockHtml(m, i, ctx);
-    dom.methodBlocks.appendChild(block);
   });
 
+  // ── 패널별 콘텐츠 렌더링 ──
+  methods.forEach((m, i) => {
+    const isFirst = i === 0;
+    const activeClass = isFirst ? ' active' : '';
+
+    // 패널 2: 분석 (Agent 1 근거 + Agent 2 해석)
+    if (analysisBlocks) {
+      const div = document.createElement('div');
+      div.className = `card method-block${activeClass}`;
+      div.id = `analysis-mblock-${i}`;
+      div.innerHTML = buildAnalysisHtml(m, i, ctx);
+      analysisBlocks.appendChild(div);
+    }
+
+    // 패널 3: 코드 (Agent 3)
+    if (codeBlocks) {
+      const div = document.createElement('div');
+      div.className = `card method-block${activeClass}`;
+      div.id = `code-mblock-${i}`;
+      div.innerHTML = buildCodeHtml(m, i, ctx);
+      codeBlocks.appendChild(div);
+    }
+
+    // 패널 4: 데이터 (Agent 4)
+    if (dataBlocks) {
+      const div = document.createElement('div');
+      div.className = `card method-block${activeClass}`;
+      div.id = `data-mblock-${i}`;
+      div.innerHTML = buildDataHtml(m, i);
+      dataBlocks.appendChild(div);
+    }
+
+    // 패널 5: 해석 가이드 (Agent 6)
+    if (interpretBlocks) {
+      const div = document.createElement('div');
+      div.className = `card method-block${activeClass}`;
+      div.id = `interpret-mblock-${i}`;
+      div.innerHTML = buildInterpretHtml(m, i);
+      interpretBlocks.appendChild(div);
+    }
+  });
+
+  bindResultTabs();
   bindCopyButtons();
   bindLangTabs();
   bindMockDataButtons();
@@ -333,12 +380,9 @@ export function renderResult(data) {
 }
 
 /**
- * 방법론 블록 HTML 생성
+ * 분석 패널 HTML — Agent 1 근거 + Agent 2 해석/절차
  */
-function buildMethodBlockHtml(m, index, ctx) {
-  const pkgPy = (m.packages?.python || []).map(p => `<span class="pkg">${escapeHtml(p)}</span>`).join('');
-  const pkgR  = (m.packages?.r || []).map(p => `<span class="pkg">${escapeHtml(p)}</span>`).join('');
-
+function buildAnalysisHtml(m, index, ctx) {
   const stepsHtml = (m.steps || []).map((s, si) => `
     <div class="step-item">
       <div class="step-num">${s.step || si + 1}</div>
@@ -368,11 +412,26 @@ function buildMethodBlockHtml(m, index, ctx) {
       <div class="desc-box mb-8">${escapeHtml(m.concept)}</div>
       <div class="step-list">${stepsHtml}</div>
     </div>
+  `;
+}
+
+/**
+ * 코드 패널 HTML — Agent 3 코드 + 패키지
+ */
+function buildCodeHtml(m, index, ctx) {
+  const pkgPy = (m.packages?.python || []).map(p => `<span class="pkg">${escapeHtml(p)}</span>`).join('');
+  const pkgR  = (m.packages?.r || []).map(p => `<span class="pkg">${escapeHtml(p)}</span>`).join('');
+
+  return `
+    <div class="method-header">
+      <div class="method-badge">Agent 3</div>
+      <div class="method-name">${escapeHtml(m.standard_name)} — 재현 코드</div>
+    </div>
 
     <div class="section">
-      <div class="section-title">맞춤형 재현 코드 (Agent 3)</div>
+      <div class="section-title">맞춤형 재현 코드</div>
       <div class="text-sm text-muted mb-8">
-        ※ ${escapeHtml(ctx.data_characteristics)} 특성을 반영한 Mock 데이터를 자동 생성합니다.
+        ※ ${escapeHtml(ctx.data_characteristics || '논문')} 특성을 반영한 Mock 데이터를 자동 생성합니다.
       </div>
       <div class="mb-8">
         <div class="text-xs text-muted">Python: <span class="pkg-row" style="display:inline-flex">${pkgPy}</span></div>
@@ -393,12 +452,23 @@ function buildMethodBlockHtml(m, index, ctx) {
         </div>
       </div>
     </div>
+  `;
+}
 
-    <!-- 가상 데이터 생성 섹션 -->
-    <div class="section mockdata-section">
-      <div class="section-title">🧪 실습용 가상 데이터 (Agent 4)</div>
+/**
+ * 데이터 패널 HTML — Agent 4 가상 데이터
+ */
+function buildDataHtml(m, index) {
+  return `
+    <div class="method-header">
+      <div class="method-badge">Agent 4</div>
+      <div class="method-name">${escapeHtml(m.standard_name)} — 실습 데이터</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">🧪 실습용 가상 데이터</div>
       <div class="text-xs text-muted mb-8">
-        논문의 기술통계를 역산하여 유사한 특성의 가상 데이터를 생성합니다. 위 코드에 바로 활용할 수 있습니다.
+        논문의 기술통계를 역산하여 유사한 특성의 가상 데이터를 생성합니다. 코드 탭의 코드에 바로 활용할 수 있습니다.
       </div>
       <div>
         <button class="btn-mockdata" data-idx="${index}" id="mockdata-btn-${index}">
@@ -410,12 +480,23 @@ function buildMethodBlockHtml(m, index, ctx) {
       </div>
       <div id="mockdata-result-${index}" style="margin-top:10px"></div>
     </div>
+  `;
+}
 
-    <!-- 분석 결과 해석 가이드 -->
-    <div class="section interpretation-section">
+/**
+ * 해석 패널 HTML — Agent 6 해석 가이드
+ */
+function buildInterpretHtml(m, index) {
+  return `
+    <div class="method-header">
+      <div class="method-badge">Agent 6</div>
+      <div class="method-name">${escapeHtml(m.standard_name)} — 결과 해석 가이드</div>
+    </div>
+
+    <div class="section">
       <div class="section-title">📖 분석 결과 해석 가이드</div>
       <div class="text-xs text-muted mb-8">
-        가상 데이터로 코드를 실행한 후, 결과를 어떻게 읽고 해석해야 하는지 안내합니다.
+        가상 데이터로 코드를 실행한 후, 결과를 어떻게 읽고 해석해야 하는지 단계별로 안내합니다.
       </div>
       <button class="btn-interpret" data-idx="${index}" id="interpret-btn-${index}">
         📖 해석 가이드 생성
@@ -522,12 +603,48 @@ async function handleMockDataGeneration(idx) {
    인터랙션: 방법론 전환, 언어 탭, 복사
    ============================================================ */
 
+/**
+ * 결과 탭 패널 전환 바인딩
+ */
+function bindResultTabs() {
+  const tabBar = $('result-tab-bar');
+  if (!tabBar) return;
+
+  tabBar.querySelectorAll('.result-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const panelId = tab.dataset.panel;
+
+      // 탭 활성화
+      tabBar.querySelectorAll('.result-tab').forEach(t => t.classList.toggle('active', t === tab));
+
+      // 패널 전환
+      document.querySelectorAll('.result-panel').forEach(p => {
+        p.classList.toggle('active', p.id === `panel-${panelId}`);
+      });
+
+      // 개요/Q&A 탭에서는 방법론 선택 숨김
+      const methodNav = dom.methodNav;
+      if (methodNav) {
+        methodNav.style.display = (panelId === 'overview' || panelId === 'qna') ? 'none' : 'flex';
+      }
+    });
+  });
+
+  // 초기 상태: 개요 탭에서는 방법론 선택 숨김
+  if (dom.methodNav) dom.methodNav.style.display = 'none';
+}
+
+/**
+ * 방법론 전환 — 모든 패널의 method-block을 동시에 전환
+ */
 function switchMethod(idx) {
   document.querySelectorAll('.method-nav-btn').forEach(btn => {
     btn.classList.toggle('active', parseInt(btn.dataset.idx) === idx);
   });
+  // 모든 패널의 method-block 전환
   document.querySelectorAll('.method-block').forEach(block => {
-    block.classList.toggle('active', block.id === `mblock-${idx}`);
+    const blockIdx = block.id.split('-').pop();
+    block.classList.toggle('active', parseInt(blockIdx) === idx);
   });
 }
 

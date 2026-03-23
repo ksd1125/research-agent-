@@ -7,7 +7,7 @@
  */
 
 import { MESSAGES } from './config.js';
-import { escapeHtml, extractCode } from './utils.js';
+import { escapeHtml } from './utils.js';
 import { runAgent1, runAgent2, runAgent3, createAbortController, abortPipeline } from './agents.js';
 import { getExtractedText } from './pdf.js';
 import { convertPdfToMarkdown, extractDescriptiveStats } from './mockdata.js';
@@ -100,14 +100,13 @@ export async function runPipeline() {
       ui.setLoading(MESSAGES.loading.agent3(idx, total));
       let codeResult;
       try {
-        const { packages, codeRaw } = await runAgent3(
+        const { packages, pythonCode, rCode } = await runAgent3(
           apiKey, statResult, paperContext, m.target_result_location
         );
-        const code = extractCode(codeRaw);
         codeResult = {
           packages,
-          python_code: code.python,
-          r_code: code.r,
+          python_code: pythonCode,
+          r_code: rCode,
         };
       } catch (err) {
         codeResult = {
