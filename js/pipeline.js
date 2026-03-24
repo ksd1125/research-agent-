@@ -101,7 +101,7 @@ export async function runPipeline() {
       let codeResult;
       try {
         const { packages, pythonCode, rCode } = await runAgent3(
-          apiKey, statResult, paperContext, m.target_result_location
+          apiKey, statResult, paperContext, m.target_result_location, m
         );
         codeResult = {
           packages,
@@ -139,7 +139,7 @@ export async function runPipeline() {
     ui.setLoading(MESSAGES.loading.agent4);
 
     try {
-      const descStats = await extractDescriptiveStats(apiKey, inputText);
+      const descStats = await extractDescriptiveStats(apiKey, inputText, paperContext);
       ui.setDescriptiveStats(descStats);
       ui.setProgress(95);
     } catch (err) {

@@ -252,6 +252,8 @@ export function renderResult(data) {
   if (ctx.domain)               ctxHtml += `<div class="context-tag">분야: ${escapeHtml(ctx.domain)}</div>`;
   if (ctx.research_type)        ctxHtml += `<div class="context-tag">유형: ${escapeHtml(ctx.research_type)}</div>`;
   if (ctx.data_characteristics) ctxHtml += `<div class="context-tag">데이터: ${escapeHtml(ctx.data_characteristics)}</div>`;
+  if (ctx.analysis_category)    ctxHtml += `<div class="context-tag">분석: ${escapeHtml(ctx.analysis_category)}</div>`;
+  if (ctx.category_evidence)    ctxHtml += `<div class="context-tag context-tag-evidence" title="${escapeHtml(ctx.category_evidence)}">📌 ${escapeHtml(ctx.category_evidence)}</div>`;
   if (_convertedMarkdown) {
     ctxHtml += `<button class="context-tag btn-md-download" id="btn-md-download" style="cursor:pointer;background:var(--color-primary);color:#fff;border:none">📄 구조화 MD 다운로드</button>`;
   }
@@ -337,7 +339,7 @@ export function renderResult(data) {
     // 패널 2: 분석 (Agent 1 근거 + Agent 2 해석)
     if (analysisBlocks) {
       const div = document.createElement('div');
-      div.className = `card method-block${activeClass}`;
+      div.className = `method-block${activeClass}`;
       div.id = `analysis-mblock-${i}`;
       div.innerHTML = buildAnalysisHtml(m, i, ctx);
       analysisBlocks.appendChild(div);
@@ -346,7 +348,7 @@ export function renderResult(data) {
     // 패널 3: 코드 (Agent 3)
     if (codeBlocks) {
       const div = document.createElement('div');
-      div.className = `card method-block${activeClass}`;
+      div.className = `method-block${activeClass}`;
       div.id = `code-mblock-${i}`;
       div.innerHTML = buildCodeHtml(m, i, ctx);
       codeBlocks.appendChild(div);
@@ -355,7 +357,7 @@ export function renderResult(data) {
     // 패널 4: 데이터 (Agent 4)
     if (dataBlocks) {
       const div = document.createElement('div');
-      div.className = `card method-block${activeClass}`;
+      div.className = `method-block${activeClass}`;
       div.id = `data-mblock-${i}`;
       div.innerHTML = buildDataHtml(m, i);
       dataBlocks.appendChild(div);
@@ -364,7 +366,7 @@ export function renderResult(data) {
     // 패널 5: 해석 가이드 (Agent 6)
     if (interpretBlocks) {
       const div = document.createElement('div');
-      div.className = `card method-block${activeClass}`;
+      div.className = `method-block${activeClass}`;
       div.id = `interpret-mblock-${i}`;
       div.innerHTML = buildInterpretHtml(m, i);
       interpretBlocks.appendChild(div);
@@ -728,8 +730,8 @@ function bindQnA() {
   if (!sendBtn || !input || !chatArea) return;
 
   // Q&A 영역 표시
-  const qnaCard = sendBtn.closest('.card');
-  if (qnaCard) qnaCard.style.display = 'block';
+  const qnaCard = sendBtn.closest('.panel-window-body') || sendBtn.closest('.card');
+  if (qnaCard) qnaCard.style.display = '';
 
   const handleSend = async () => {
     const question = input.value.trim();
