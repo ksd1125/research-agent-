@@ -168,14 +168,20 @@
       </div>
     </div>
 
-    <!-- 패널: 해석 가이드 -->
+    <!-- 패널: 해석 가이드 (3파트 통합) -->
     <div class="result-panel" id="panel-interpret">
       <div class="panel-window">
         <div class="panel-window-header">
           <span class="panel-window-icon">📖</span>
-          <span class="panel-window-title">결과 해석 가이드</span>
+          <span class="panel-window-title">결과 해석 · 리뷰 · 후속 연구</span>
         </div>
         <div class="panel-window-body">
+          <!-- 해석 서브탭 -->
+          <div class="interpret-sub-tabs" id="interpret-sub-tabs">
+            <button class="interpret-sub-tab active" data-sub="guide">📖 결과 해석</button>
+            <button class="interpret-sub-tab" data-sub="review">🔍 리뷰어 평가</button>
+            <button class="interpret-sub-tab" data-sub="future">🚀 후속 연구</button>
+          </div>
           <div id="interpret-blocks"></div>
         </div>
       </div>
