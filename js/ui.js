@@ -486,24 +486,28 @@ function buildDataHtml(m, index) {
 }
 
 /**
- * 해석 패널 HTML — Agent 6 해석 가이드
+ * 해석 패널 HTML — Agent 6: 3파트 (해석 + 리뷰 + 후속연구)
  */
 function buildInterpretHtml(m, index) {
   return `
     <div class="method-header">
-      <div class="method-badge">Agent 6</div>
-      <div class="method-name">${escapeHtml(m.standard_name)} — 결과 해석 가이드</div>
+      <div class="method-badge">Agent 6 · Peer Reviewer</div>
+      <div class="method-name">${escapeHtml(m.standard_name)} — 해석 · 리뷰 · 후속 연구</div>
     </div>
 
     <div class="section">
-      <div class="section-title">📖 분석 결과 해석 가이드</div>
       <div class="text-xs text-muted mb-8">
-        가상 데이터로 코드를 실행한 후, 결과를 어떻게 읽고 해석해야 하는지 단계별로 안내합니다.
+        결과 해석 가이드(Part I) + 동료 평가자 비판적 검토(Part II) + 후속 연구 아이디어(Part III)를 한번에 생성합니다.
       </div>
       <button class="btn-interpret" data-idx="${index}" id="interpret-btn-${index}">
-        📖 해석 가이드 생성
+        📖 3파트 해석 가이드 생성
       </button>
-      <div id="interpret-result-${index}" style="margin-top:10px"></div>
+      <div id="interpret-result-${index}" style="margin-top:10px">
+        <!-- 서브탭에 의해 Part I/II/III가 토글됨 -->
+        <div class="interpret-part active" data-part="guide" id="interpret-guide-${index}"></div>
+        <div class="interpret-part" data-part="review" id="interpret-review-${index}"></div>
+        <div class="interpret-part" data-part="future" id="interpret-future-${index}"></div>
+      </div>
     </div>
   `;
 }
@@ -689,31 +693,125 @@ function bindInterpretationButtons() {
   document.querySelectorAll('.btn-interpret').forEach(btn => {
     btn.addEventListener('click', async () => {
       const idx = parseInt(btn.dataset.idx);
-      const resultEl = $(`interpret-result-${idx}`);
+      const guideEl = $(`interpret-guide-${idx}`);
+      const reviewEl = $(`interpret-review-${idx}`);
+      const futureEl = $(`interpret-future-${idx}`);
       const apiKey = dom.apiKey.value.trim();
 
-      if (!apiKey) { resultEl.innerHTML = '<div class="desc-box text-danger">API 키를 입력해주세요.</div>'; return; }
+      if (!apiKey) {
+        if (guideEl) guideEl.innerHTML = '<div class="desc-box text-danger">API 키를 입력해주세요.</div>';
+        return;
+      }
       if (!_analysisData?.methods?.[idx]) return;
 
       btn.disabled = true;
-      btn.textContent = '⏳ 생성 중...';
+      btn.textContent = '⏳ 3파트 생성 중...';
 
       try {
         const method = _analysisData.methods[idx];
         const ctx = _analysisData.paper_context || {};
         const guide = await runInterpretationGuide(apiKey, method, ctx, method.target_location);
 
-        // 마크다운을 간단한 HTML로 변환
-        const html = simpleMarkdownToHtml(guide);
-        resultEl.innerHTML = `<div class="interpret-guide">${html}</div>`;
+        // 3파트로 분할: Part I, Part II, Part III
+        const fullHtml = simpleMarkdownToHtml(guide);
+        const parts = splitInterpretParts(fullHtml);
+
+        if (guideEl)  guideEl.innerHTML  = `<div class="interpret-guide">${parts.guide}</div>`;
+        if (reviewEl) reviewEl.innerHTML = `<div class="interpret-guide">${parts.review}</div>`;
+        if (futureEl) futureEl.innerHTML = `<div class="interpret-guide">${parts.future}</div>`;
 
         btn.textContent = '🔄 재생성';
         btn.disabled = false;
       } catch (err) {
-        resultEl.innerHTML = `<div class="desc-box text-danger">생성 실패: ${escapeHtml(err.message)}</div>`;
-        btn.textContent = '📖 해석 가이드 생성';
+        if (guideEl) guideEl.innerHTML = `<div class="desc-box text-danger">생성 실패: ${escapeHtml(err.message)}</div>`;
+        btn.textContent = '📖 3파트 해석 가이드 생성';
         btn.disabled = false;
       }
+    });
+  });
+
+  // 서브탭 바인딩
+  bindInterpretSubTabs();
+}
+
+/**
+ * 해석 결과를 Part I/II/III로 분할
+ */
+function splitInterpretParts(html) {
+  // Part II, Part III 구분자로 분할
+  const part2Marker = /Part\s*II[^<]*/i;
+  const part3Marker = /Part\s*III[^<]*/i;
+
+  let guide = html;
+  let review = '';
+  let future = '';
+
+  // Part II 위치 찾기 — h3 태그 내에서 검색
+  const part2Match = html.match(/<h3[^>]*>([^<]*Part\s*II[^<]*)<\/h3>/i);
+  const part3Match = html.match(/<h3[^>]*>([^<]*Part\s*III[^<]*)<\/h3>/i);
+
+  if (part2Match) {
+    const p2Idx = html.indexOf(part2Match[0]);
+    if (part3Match) {
+      const p3Idx = html.indexOf(part3Match[0]);
+      guide = html.substring(0, p2Idx);
+      review = html.substring(p2Idx, p3Idx);
+      future = html.substring(p3Idx);
+    } else {
+      guide = html.substring(0, p2Idx);
+      review = html.substring(p2Idx);
+    }
+  } else if (part3Match) {
+    const p3Idx = html.indexOf(part3Match[0]);
+    guide = html.substring(0, p3Idx);
+    future = html.substring(p3Idx);
+  }
+
+  // 구분자 대체 시도: "# Part"이 h3가 아닌 다른 형태로 렌더링될 경우
+  if (!review && !future) {
+    // "━━━" 구분선 또는 "Part II" 텍스트로 분할 시도
+    const lines = html.split('<br>');
+    let currentPart = 'guide';
+    const partContents = { guide: [], review: [], future: [] };
+
+    for (const line of lines) {
+      if (line.match(/Part\s*II/i)) currentPart = 'review';
+      else if (line.match(/Part\s*III/i)) currentPart = 'future';
+      partContents[currentPart].push(line);
+    }
+
+    if (partContents.review.length > 0 || partContents.future.length > 0) {
+      guide = partContents.guide.join('<br>');
+      review = partContents.review.join('<br>');
+      future = partContents.future.join('<br>');
+    }
+  }
+
+  return {
+    guide: guide || '<div class="text-muted">해석 가이드 내용이 없습니다.</div>',
+    review: review || '<div class="text-muted">리뷰어 평가 내용이 없습니다.</div>',
+    future: future || '<div class="text-muted">후속 연구 아이디어가 없습니다.</div>',
+  };
+}
+
+/**
+ * 해석 서브탭 전환 바인딩
+ */
+function bindInterpretSubTabs() {
+  const subTabBar = $('interpret-sub-tabs');
+  if (!subTabBar) return;
+
+  subTabBar.querySelectorAll('.interpret-sub-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const sub = tab.dataset.sub;
+
+      // 서브탭 활성화
+      subTabBar.querySelectorAll('.interpret-sub-tab').forEach(t => t.classList.toggle('active', t === tab));
+
+      // 해당 파트 표시/숨김
+      document.querySelectorAll('.interpret-part').forEach(part => {
+        part.classList.toggle('active', part.dataset.part === sub);
+      });
     });
   });
 }

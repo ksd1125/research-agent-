@@ -15,12 +15,12 @@ export const API = {
   defaultTemp: 0.1,
   /** 에이전트별 최대 토큰 설정 */
   tokens: {
-    agent1: 4000,
+    agent1: 5000,        // 12개 카테고리 분류를 위해 증가
     agent2: 2000,
     agent3Meta: 500,
-    agent3Code: 12000,
+    agent3Code: 18000,   // 4-Phase(원천→전처리→분석→시각화) 코드 생성을 위해 증가
     qna: 2000,
-    interpretation: 5000,
+    interpretation: 8000, // Peer Reviewer 3파트 구조를 위해 증가
   },
   /** 감지할 최대 방법론 수 */
   maxMethods: 2,

@@ -92,7 +92,7 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000) {
 const METHODOLOGY_TAXONOMY = `
 [연구 방법론 분류 체계 — 분류 전 반드시 참조]
 
-아래는 10가지 주요 분석 카테고리입니다. 논문의 데이터 구조, 키워드, 결과 테이블 형태를 아래와 대조하여 analysis_category를 결정하세요.
+아래는 12가지 주요 분석 카테고리입니다. 논문의 데이터 구조, 키워드, 결과 테이블 형태를 아래와 대조하여 analysis_category를 결정하세요.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. regression (회귀분석 — 횡단면)
@@ -103,13 +103,19 @@ const METHODOLOGY_TAXONOMY = `
 • 대표 분석: OLS, WLS, GLS, 로지스틱회귀, 프로빗, 토빗, 분위수회귀
 • 주의: 패널/시계열이 아닌 단일 시점 데이터에만 적용
 
-2. panel (패널/종단 분석)
+2. causal_inference (인과추론 — 패널/준실험)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• 식별 키워드: panel data, fixed effects, random effects, DID, difference-in-differences, PSM-DID, RDD, regression discontinuity, instrumental variable, 2SLS, IV, GMM, Hausman test, entity effects, time effects, within estimator
-• 데이터 구조: 패널(entity × time), 다기간 관측, 개체 추적
-• 결과 테이블 특징: 고정효과/랜덤효과 계수, Hausman검정, 처리효과(ATT/ATE), 1st stage F-stat(IV), bandwidth(RDD)
-• 대표 분석: 고정효과(FE), 랜덤효과(RE), DID, PSM-DID, RDD, IV/2SLS, system GMM
-• 핵심 구분: "처리군 vs 통제군" + "처리 전 vs 처리 후" 구조 → DID. 성향점수 매칭 언급 → PSM-DID. 임계값/컷오프 기준 → RDD.
+• 식별 키워드: panel data, fixed effects, random effects, DID, difference-in-differences, staggered DID, staggered adoption, two-way fixed effects(TWFE), event study, PSM-DID, synthetic control, synthetic difference-in-differences, RDD, regression discontinuity, sharp RDD, fuzzy RDD, instrumental variable, 2SLS, IV, GMM, Hausman test, entity effects, time effects, within estimator, Callaway-Sant'Anna, Sun-Abraham, de Chaisemartin-D'Haultfoeuille, parallel trends
+• 데이터 구조: 패널(entity × time), 다기간 관측, 개체 추적, 처리군/통제군 비교
+• 결과 테이블 특징: 고정효과/랜덤효과 계수, Hausman검정, 처리효과(ATT/ATE/CATT), 1st stage F-stat(IV), bandwidth(RDD), 사건연구 그래프(event-study plot), 합성대조군 경로 그래프
+• 대표 분석: 고정효과(FE), 랜덤효과(RE), 전통 DID, 다기간 DID(Staggered DID), PSM-DID, 합성대조군(SC/SDID), RDD(Sharp/Fuzzy), IV/2SLS, system GMM
+• 핵심 구분:
+  - "처리군 vs 통제군" + "처리 전 vs 처리 후" → DID
+  - 처리 시점이 개체마다 다르면 → Staggered DID (Callaway-Sant'Anna, Sun-Abraham)
+  - 성향점수 매칭 → PSM-DID
+  - 소수 처리 단위 + 다수 통제 단위 가중합 → Synthetic Control
+  - 임계값/컷오프 기준 → RDD
+  - 내생성 통제를 위한 외생 변수 → IV/2SLS
 
 3. experimental (실험 설계)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -117,7 +123,7 @@ const METHODOLOGY_TAXONOMY = `
 • 데이터 구조: 실험군/통제군, 요인설계(2×2, 2×3 등), 반복측정
 • 결과 테이블 특징: F-값, 자유도(df), 효과크기(η², d), 사후검정(Tukey, Bonferroni), 조건별 평균/SD
 • 대표 분석: 독립표본 t-검정, 일원/이원 ANOVA, MANOVA, ANCOVA, 반복측정 ANOVA, 혼합설계 ANOVA
-• 핵심 구분: "무작위 배정"이 명시 → experimental. "처리군/통제군"만 있고 무작위 미언급 → panel(DID) 가능성.
+• 핵심 구분: "무작위 배정"이 명시 → experimental. "처리군/통제군"만 있고 무작위 미언급 → causal_inference(DID) 가능성.
 
 4. spatial (공간 분석)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -135,15 +141,31 @@ const METHODOLOGY_TAXONOMY = `
 • 대표 분석: AR, MA, ARIMA, SARIMA, VAR, VECM, GARCH, 공적분분석
 • 핵심 구분: 단일 변수 예측 → ARIMA. 다변수 상호작용 → VAR/VECM. 변동성 모형 → GARCH.
 
-6. machine_learning (기계학습)
+6. machine_learning (기계학습 — 예측 중심)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • 식별 키워드: machine learning, random forest, XGBoost, gradient boosting, neural network, deep learning, SVM, support vector, cross-validation, k-fold, hyperparameter, feature importance, ROC, AUC, confusion matrix, train/test split, overfitting, ensemble
 • 데이터 구조: 특성변수(features) × 표본, 대규모 데이터셋, 학습/테스트 분할
 • 결과 테이블 특징: Accuracy, Precision, Recall, F1, AUC-ROC, RMSE, MAE, feature importance ranking
 • 대표 분석: 랜덤포레스트, XGBoost, SVM, 로지스틱(ML맥락), kNN, 신경망, 앙상블
-• 핵심 구분: "예측" 목적 + 교차검증/하이퍼파라미터 → ML. "설명/인과" 목적 → regression 또는 panel.
+• 핵심 구분: "예측" 목적 + 교차검증/하이퍼파라미터 → ML. "인과추론" 목적이면 causal_ml 또는 causal_inference.
 
-7. bayesian (베이지안 분석)
+7. causal_ml (인과적 기계학습)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• 식별 키워드: Double Machine Learning(DML), causal forest, generalized random forest(GRF), CATE(Conditional Average Treatment Effect), heterogeneous treatment effects, debiased machine learning, Chernozhukov, orthogonal learning, meta-learners(T-learner, S-learner, X-learner), targeted learning(TMLE), AIPW(augmented inverse propensity weighting), Belloni, post-double-selection LASSO
+• 데이터 구조: 고차원 데이터(다수 공변량) + 처리/통제 구조, 이질적 처리효과 탐색
+• 결과 테이블 특징: ATE/CATE 추정치, 신뢰구간, 변수 중요도(처리효과 이질성 기준), 처리효과 분포 그래프
+• 대표 분석: DML, Causal Forest, GRF, Meta-learners, TMLE, AIPW, Post-LASSO
+• 핵심 구분: ML 기법을 사용하되 "인과적 효과 추정"이 목표 → causal_ml. 단순 예측이 목표 → machine_learning.
+
+8. unstructured_data (비정형 데이터 분석)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• 식별 키워드: NLP, natural language processing, text mining, topic modeling, LDA, sentiment analysis, word embedding, Word2Vec, BERT, GPT, transformer, fine-tuning, zero-shot classification, few-shot learning, text classification, named entity recognition(NER), CNN, RNN, LSTM, image classification, computer vision, transfer learning, pre-trained model, embedding, cosine similarity, TF-IDF, tokenization
+• 데이터 구조: 텍스트 코퍼스, 이미지 데이터셋, 오디오/비디오, 임베딩 벡터, 문서-용어 행렬(DTM)
+• 결과 테이블 특징: 토픽 분포, 감성 점수, 분류 정확도(Accuracy/F1), 혼동행렬, 임베딩 시각화(t-SNE/UMAP), 어텐션 맵, 단어 빈도/중요도
+• 대표 분석: LDA 토픽모델링, BERT 기반 텍스트 분류, 제로샷/퓨샷 분류, 감성분석, CNN/RNN 이미지/텍스트 분류, 트랜스포머 미세조정, 워드 임베딩 분석
+• 핵심 구분: 텍스트/이미지/오디오 등 비정형 데이터가 주요 분석 대상 → unstructured_data. 정형 데이터의 ML 예측 → machine_learning.
+
+9. bayesian (베이지안 분석)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • 식별 키워드: Bayesian, prior, posterior, MCMC, Gibbs sampling, Metropolis-Hastings, credible interval, BF(Bayes Factor), hierarchical model, informative prior, noninformative prior, convergence diagnostics, Rhat, trace plot
 • 데이터 구조: 다양 (횡단면, 계층, 시계열 모두 가능)
@@ -151,7 +173,7 @@ const METHODOLOGY_TAXONOMY = `
 • 대표 분석: 베이지안 회귀, 베이지안 계층모형(HLM), BVAR
 • 핵심 구분: "사전분포(prior)", "사후분포(posterior)", "MCMC" 명시 → bayesian
 
-8. sem (구조방정식 모형)
+10. sem (구조방정식 모형)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • 식별 키워드: SEM, structural equation, path analysis, latent variable, factor loading, CFA, confirmatory factor analysis, EFA, exploratory factor analysis, measurement model, structural model, fit indices, CFI, TLI, RMSEA, SRMR, modification indices
 • 데이터 구조: 다중 관측변수 → 잠재변수 구조, 설문 기반 데이터
@@ -159,7 +181,7 @@ const METHODOLOGY_TAXONOMY = `
 • 대표 분석: CFA, 경로분석, 완전구조방정식모형, 다집단분석, 매개/조절분석
 • 핵심 구분: "잠재변수(latent)", "적합도(fit index)", "경로계수(path coefficient)" → sem
 
-9. survival (생존 분석)
+11. survival (생존 분석)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • 식별 키워드: survival analysis, Cox regression, Cox PH, proportional hazards, Kaplan-Meier, log-rank test, hazard ratio, censoring, event time, time-to-event, AFT model, competing risks, recurrent events
 • 데이터 구조: 시간-이벤트 데이터, 중도절단(censoring) 포함, 추적관찰 기간
@@ -167,7 +189,7 @@ const METHODOLOGY_TAXONOMY = `
 • 대표 분석: Kaplan-Meier, Cox 비례위험모형, 가속실패시간(AFT), 경쟁위험 모형
 • 핵심 구분: "위험(hazard)", "생존(survival)", "중도절단(censoring)" → survival
 
-10. meta_analysis (메타분석)
+12. meta_analysis (메타분석)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • 식별 키워드: meta-analysis, systematic review, effect size, pooled estimate, heterogeneity, I², Q-statistic, forest plot, funnel plot, publication bias, Egger's test, random-effects model, fixed-effect model, subgroup analysis
 • 데이터 구조: 개별 연구들의 효과크기/표준오차/표본크기 집합
@@ -183,10 +205,12 @@ const METHODOLOGY_TAXONOMY = `
 4. MCMC/사전분포/사후분포 → bayesian
 5. 잠재변수/CFA/경로분석/적합도 → sem
 6. 메타분석/숲그림/I² → meta_analysis
-7. 교차검증/feature importance/예측 모형 → machine_learning
-8. 단위근/ARIMA/VAR/공적분 → time_series
-9. 패널(entity×time)/FE/RE/DID/IV/PSM → panel
-10. 위에 해당 없으면 → regression
+7. DML/Causal Forest/CATE/이질적 처리효과 + ML 기법 → causal_ml
+8. 텍스트/NLP/BERT/CNN/RNN/토픽모델/임베딩/비정형 → unstructured_data
+9. 교차검증/feature importance/예측 모형(인과 아닌 순수 예측) → machine_learning
+10. 단위근/ARIMA/VAR/공적분 → time_series
+11. 패널(entity×time)/FE/RE/DID/Staggered DID/Synthetic Control/IV/PSM/RDD → causal_inference
+12. 위에 해당 없으면 → regression
 `;
 
 function buildAgent1Prompt(paperText) {
@@ -216,7 +240,7 @@ ${paperText}
     "domain": "학문 분야 (예: 심리학, 경제학, 빅데이터, 의학, 도시계획 등)",
     "research_type": "연구 형태 (예: 실험 연구, 준실험 연구, 횡단 연구, 종단 연구, 메타분석 등)",
     "data_characteristics": "데이터 특성 (간략히 30자 이내)",
-    "analysis_category": "위 분류 체계의 10개 카테고리 중 가장 적합한 것 1개: regression | panel | experimental | spatial | time_series | machine_learning | bayesian | sem | survival | meta_analysis",
+    "analysis_category": "위 분류 체계의 12개 카테고리 중 가장 적합한 것 1개: regression | causal_inference | experimental | spatial | time_series | machine_learning | causal_ml | unstructured_data | bayesian | sem | survival | meta_analysis",
     "category_evidence": "이 카테고리를 선택한 근거 (어떤 식별 신호/키워드를 발견했는지 1~2문장)"
   },
   "section_index": [
@@ -345,10 +369,16 @@ function getAnalysisProfile(category, analysisType, lang) {
       r: 'dplyr, lmtest, sandwich, car',
       dataHint: '횡단면 데이터를 생성하세요. 종속변수, 독립변수, 통제변수를 포함.',
     },
+    causal_inference: {
+      python: 'pandas, numpy, statsmodels, linearmodels, scipy, matplotlib',
+      r: 'fixest, plm, did, dplyr, lmtest, ggplot2',
+      dataHint: '패널 데이터(entity-time 구조)를 생성하세요. entity ID, 시간 변수, 처리 여부(treatment indicator)를 포함. 처리 시점이 다른 다기간 설계도 고려.',
+    },
+    // 하위 호환성: 기존 panel 카테고리를 causal_inference로 매핑
     panel: {
-      python: 'pandas, numpy, statsmodels, linearmodels, scipy',
-      r: 'fixest, plm, dplyr, lmtest',
-      dataHint: '패널 데이터(entity-time 구조)를 생성하세요. entity ID와 시간 변수를 포함.',
+      python: 'pandas, numpy, statsmodels, linearmodels, scipy, matplotlib',
+      r: 'fixest, plm, did, dplyr, lmtest, ggplot2',
+      dataHint: '패널 데이터(entity-time 구조)를 생성하세요. entity ID, 시간 변수, 처리 여부(treatment indicator)를 포함.',
     },
     experimental: {
       python: 'pandas, numpy, scipy.stats, statsmodels.stats, pingouin',
@@ -369,6 +399,16 @@ function getAnalysisProfile(category, analysisType, lang) {
       python: 'pandas, numpy, scikit-learn, matplotlib, seaborn',
       r: 'caret, randomForest, glmnet, dplyr, ggplot2',
       dataHint: '학습용 데이터를 생성하세요. 특성변수(features)와 목표변수(target)를 포함. 학습/테스트 분할을 포함.',
+    },
+    causal_ml: {
+      python: 'pandas, numpy, econml, doubleml, scikit-learn, matplotlib, seaborn',
+      r: 'grf, DoubleML, dplyr, ggplot2',
+      dataHint: '고차원 관측 데이터를 생성하세요. 처리변수(treatment), 결과변수(outcome), 다수의 공변량(confounders)을 포함. 처리효과의 이질성(heterogeneity)이 드러나도록 교호작용을 반영.',
+    },
+    unstructured_data: {
+      python: 'pandas, numpy, scikit-learn, matplotlib, seaborn',
+      r: 'tidytext, text2vec, caret, dplyr, ggplot2',
+      dataHint: '비정형 데이터(텍스트/이미지) 분석을 위한 데이터를 생성하세요. 텍스트 분석의 경우 문서-용어 행렬(DTM) 또는 임베딩 벡터를 포함. 레이블/카테고리 변수도 포함.',
     },
     bayesian: {
       python: 'pandas, numpy, pymc, arviz, matplotlib',
@@ -403,8 +443,12 @@ function getAnalysisProfile(category, analysisType, lang) {
       profile = profiles.spatial;
     else if (at.includes('arima') || at.includes('var') || at.includes('garch') || at.includes('time'))
       profile = profiles.time_series;
-    else if (at.includes('did') || at.includes('panel') || at.includes('psm') || at.includes('rdd') || at.includes('iv') || at.includes('2sls'))
-      profile = profiles.panel;
+    else if (at.includes('dml') || at.includes('causal_forest') || at.includes('causal forest') || at.includes('cate') || at.includes('double_machine'))
+      profile = profiles.causal_ml;
+    else if (at.includes('did') || at.includes('panel') || at.includes('psm') || at.includes('rdd') || at.includes('iv') || at.includes('2sls') || at.includes('synthetic'))
+      profile = profiles.causal_inference;
+    else if (at.includes('nlp') || at.includes('bert') || at.includes('topic') || at.includes('lda') || at.includes('text') || at.includes('cnn') || at.includes('rnn') || at.includes('transformer') || at.includes('embedding'))
+      profile = profiles.unstructured_data;
     else if (at.includes('cox') || at.includes('survival') || at.includes('hazard'))
       profile = profiles.survival;
     else if (at.includes('random_forest') || at.includes('xgboost') || at.includes('neural') || at.includes('svm'))
@@ -434,6 +478,29 @@ function buildAgent3SingleLangPrompt(lang, standardName, steps, paperContext, ta
   const keyVars = methodMeta?.key_variables || {};
   const { libs, dataHint } = getAnalysisProfile(category, analysisType, lang);
 
+  // 카테고리별 시각화 힌트
+  const vizHints = {
+    causal_inference: lang === 'python'
+      ? 'Event-study plot(처리효과 시점별 추이), parallel trends 사전 검정 그래프, ATT 계수 forest plot'
+      : 'Event-study plot(처리효과 시점별 추이), parallel trends 사전 검정 그래프, ATT 계수 forest plot',
+    panel: lang === 'python'
+      ? 'Event-study plot(처리효과 시점별 추이), 계수 비교 forest plot'
+      : 'Event-study plot(처리효과 시점별 추이), 계수 비교 forest plot',
+    experimental: '집단별 평균 비교 막대/바이올린 그래프, 교호작용 plot',
+    spatial: 'Choropleth 지도(계수 분포), Moran scatter plot',
+    time_series: 'IRF(충격반응함수) 그래프, 시계열 분해 plot, 예측 vs 실제 비교 그래프',
+    machine_learning: 'Feature importance 막대 그래프, ROC curve, 혼동행렬 히트맵',
+    causal_ml: 'CATE 분포 히스토그램, 처리효과 이질성 변수별 partial dependence plot, feature importance(처리효과 기준)',
+    unstructured_data: '토픽 분포 막대 그래프 / 임베딩 t-SNE/UMAP 산점도, 단어 빈도 워드클라우드, 혼동행렬',
+    bayesian: 'Posterior 분포 plot, trace plot, forest plot(사후 요약)',
+    sem: 'Path diagram, 적합도 지표 비교 테이블',
+    survival: 'Kaplan-Meier 생존 곡선(집단별 비교), Hazard ratio forest plot, Schoenfeld residuals plot',
+    meta_analysis: 'Forest plot(개별 연구 + 통합 효과), funnel plot(출판 편향)',
+    regression: '계수 forest plot, 잔차 진단 그래프(Q-Q plot, 잔차 vs 적합값)',
+  };
+
+  const vizHint = vizHints[category] || vizHints.regression;
+
   return `당신은 ${langName} 데이터 분석 전문가입니다.
 아래 정보를 바탕으로 ${langName} 코드 하나만 작성하세요.
 코드 외의 설명은 일절 쓰지 마세요. 순수 ${langName} 코드만 출력하세요.
@@ -449,15 +516,46 @@ ${keyVars.outcome ? `[결과변수]: ${keyVars.outcome}` : ''}
 ${keyVars.treatment ? `[핵심변수]: ${keyVars.treatment}` : ''}
 ${keyVars.controls ? `[통제/공변량]: ${keyVars.controls}` : ''}
 
-코드 작성 조건:
-1. Mock 데이터 생성: ${dataHint}
-   - 변수명은 논문 맥락에 맞는 영문 snake_case
-   - ${dataGen}로 생성
-2. 분석 절차의 모든 단계를 순서대로 구현
-3. 결과 출력은 ${targetLocation}와 유사한 형태로 출력
-4. 한국어 주석으로 각 단계를 설명
-5. 권장 라이브러리: ${libs} (필요 시 다른 라이브러리도 자유롭게 사용)
-6. 코드는 복사해서 바로 실행 가능해야 함 (import/library 포함)
+★★★ 코드는 반드시 아래 4개 Phase 구조로 작성하세요 ★★★
+
+# ============================================================
+# Phase A: 원천 데이터 생성 (Raw Data Generation)
+# ============================================================
+# - ${dataHint}
+# - 변수명은 논문 맥락에 맞는 영문 snake_case
+# - ${dataGen}로 생성
+# - 논문의 기술통계(평균, 표준편차, 범위)를 최대한 반영
+
+# ============================================================
+# Phase B: 데이터 전처리 및 가공 (Data Preprocessing)
+# ============================================================
+# - 분석 방법론에 맞게 데이터를 변환
+# - 예: wide→long form 변환(melt/pivot), 결측치 처리, 로그 변환, 더미 변수 생성
+# - 이상치 처리, 스케일링, 변수 생성 등 필요한 전처리 단계를 모두 포함
+# - 최종 분석에 사용할 데이터프레임의 구조를 print로 확인
+
+# ============================================================
+# Phase C: 분석 및 결과 도출 (Analysis & Results)
+# ============================================================
+# - 분석 절차의 모든 단계를 순서대로 구현
+# - 통계 모형 적합(fitting) 및 결과값 도출
+# - 계수(coefficient), p-value, 적합도(R², AIC 등), 처리효과 등을 명확히 출력
+# - 결과 출력은 ${targetLocation}와 유사한 학술 논문 스타일 테이블로 정리
+
+# ============================================================
+# Phase D: 테이블 및 시각화 (Tables & Visualization)
+# ============================================================
+# - 학술 논문 스타일의 결과 테이블(계수, SE, p-value, 유의수준 별표 포함) 출력
+# - 추천 시각화: ${vizHint}
+# - 최소 1개 이상의 핵심 그래프를 반드시 포함
+# - 그래프에는 한국어 제목, 축 레이블, 범례를 포함
+# - 학술 논문에 바로 삽입 가능한 수준의 시각화 품질
+
+추가 조건:
+1. 한국어 주석으로 각 Phase와 세부 단계를 설명
+2. 권장 라이브러리: ${libs} (필요 시 다른 라이브러리도 자유롭게 사용)
+3. 코드는 복사해서 바로 실행 가능해야 함 (import/library 포함)
+4. Phase 사이에 빈 줄과 구분선 주석(# ====...)을 반드시 넣으세요
 
 ${langName} 코드만 출력하세요:`;
 }
@@ -640,8 +738,26 @@ export async function runInterpretationGuide(apiKey, methodResult, paperContext,
 1. 하이퍼파라미터 튜닝으로 성능 향상 시도
 2. 다른 알고리즘(예: 로지스틱 vs 랜덤포레스트 vs XGBoost)과 비교
 3. SHAP 또는 Permutation Importance로 모형 해석`;
+  } else if (at.includes('causal_ml') || at.includes('dml') || at.includes('causal_forest') || at.includes('causal forest')) {
+    step2Guide = `## Step 2: 핵심 인과추론 결과 읽기
+- ATE/CATE(조건부 평균 처리효과) 추정치와 신뢰구간의 의미
+- 처리효과 이질성: 어떤 하위집단에서 효과가 크거나 작은지
+- 변수 중요도(처리효과 이질성 기준): 어떤 공변량이 처리효과의 차이를 주도하는지`;
+    step5Tasks = `## Step 5: 심화 실습 과제
+1. 공변량 집합을 변경하여 CATE 추정의 민감도 확인
+2. DML과 Causal Forest 결과를 비교하여 모형 가정의 영향 관찰
+3. 처리효과의 정책적 함의를 해석 (예: 어떤 집단에 정책을 집중해야 하는지)`;
+  } else if (at.includes('unstructured') || at.includes('nlp') || at.includes('bert') || at.includes('topic') || at.includes('text') || at.includes('cnn') || at.includes('rnn')) {
+    step2Guide = `## Step 2: 핵심 결과 읽기
+- 분류 성능 지표(Accuracy, F1, AUC)의 의미와 모형 간 비교
+- 토픽 모델링 결과: 각 토픽의 대표 키워드와 문서 분포 해석
+- 임베딩 시각화(t-SNE/UMAP): 클러스터 구조가 무엇을 의미하는지`;
+    step5Tasks = `## Step 5: 심화 실습 과제
+1. 사전학습 모델(BERT 등)과 전통 ML(TF-IDF + SVM)의 성능 비교
+2. 토픽 수(K)를 변경하여 Coherence score 비교
+3. 임베딩 차원 축소 방법(t-SNE vs UMAP)에 따른 시각화 차이 관찰`;
   } else {
-    // 기본: 회귀분석/패널/DID/IV 등
+    // 기본: 회귀분석/인과추론/DID/IV 등
     step2Guide = `## Step 2: 핵심 계수(coefficient) 읽기
 - 종속변수가 무엇이고, 핵심 독립변수의 계수가 의미하는 것
 - "계수 β = X.XX는 [독립변수]가 1단위 증가할 때 [종속변수]가 X.XX만큼 변화함을 의미"
@@ -652,10 +768,10 @@ export async function runInterpretationGuide(apiKey, methodResult, paperContext,
 3. 다른 추정 방법(예: OLS vs IV, Logit vs Probit)으로 결과 비교`;
   }
 
-  const prompt = `당신은 통계 분석 교육 전문가입니다.
+  const prompt = `당신은 통계 분석 교육 전문가이자, 학술 논문 동료 평가(Peer Review) 전문가입니다.
 
 학생이 논문의 "${targetLocation}" 결과를 가상 데이터로 재현했습니다.
-이 학생이 결과를 단계별로 이해할 수 있도록, **논문의 실제 결과 구조를 기반으로** 구체적인 해석 가이드를 작성하세요.
+결과를 이해하고, 비판적으로 평가하고, 후속 연구로 확장할 수 있도록 **3파트 가이드**를 작성하세요.
 
 [방법론]: ${methodResult.standard_name}
 [분석 유형]: ${analysisType || '미지정'}
@@ -664,7 +780,11 @@ export async function runInterpretationGuide(apiKey, methodResult, paperContext,
 [목표 결과]: ${targetLocation}
 [분석 절차]: ${JSON.stringify(methodResult.steps)}
 
-아래 5단계로 한국어 가이드를 작성하세요. **일반론이 아닌 이 논문에 특화된 내용**으로 작성하세요:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Part I: 결과 해석 가이드 (Objective Interpretation)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**일반론이 아닌 이 논문에 특화된 내용**으로 작성하세요:
 
 ## Step 1: 결과 테이블/그림 구조 파악
 - ${targetLocation}의 구조(행/열, 패널, 범례 등) 설명
@@ -674,7 +794,7 @@ ${step2Guide}
 
 ## Step 3: 가상 데이터로 테이블/그래프/문서 만들기
 - 코드 실행 결과를 논문의 ${targetLocation}과 같은 형태로 정리하는 방법
-- 주요 결과를 시각화하는 적절한 그래프 유형과 제작 가이드
+- Phase D에서 생성한 시각화의 해석 방법
 - 결과를 학술 문서 스타일로 기술하는 방법
 
 ## Step 4: 원본 논문 결과와 비교 해석
@@ -684,23 +804,46 @@ ${step2Guide}
 
 ${step5Tasks}
 
-## Step 6: 방법론 한계 및 최신 대안 (Method Evolution)
-이 논문이 사용한 "${methodResult.standard_name}" 방법론에 대해 다음을 분석하세요:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Part II: 동료 평가자의 비판적 검토 (Peer Reviewer Critique)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. **이 방법론의 알려진 한계점** (2~3가지):
-   - 이 논문의 구체적 맥락(분야: ${paperContext.domain}, 데이터: ${paperContext.data_characteristics})에서 어떤 한계가 있는지
-   - 어떤 가정(assumption)이 위반될 가능성이 있는지
+당신은 이제 **이 논문의 엄격한 동료 심사위원(Peer Reviewer)**입니다.
+"만약 내가 이 논문을 심사한다면?" 관점에서 다음을 분석하세요:
 
-2. **최신 대안 방법론** (2~3가지):
-   - 최근 학술 문헌에서 이 한계를 보완하기 위해 사용되는 새로운 방법론
-   - 각 대안이 기존 한계를 어떻게 해결하는지 1~2문장
-   - 대표 논문 또는 제안자 (예: "Callaway & Sant'Anna, 2021")
+## 6-1. 방법론 한계 및 가정 위반 가능성
+- 이 논문이 사용한 "${methodResult.standard_name}" 방법론의 **핵심 가정(assumptions)** 3가지를 나열
+- 이 논문의 구체적 맥락(분야: ${paperContext.domain}, 데이터: ${paperContext.data_characteristics})에서 **어떤 가정이 위반될 가능성이 있는지** 구체적으로 지적
+- 가정 위반이 결과에 미칠 수 있는 **편향(bias)의 방향과 크기**를 추정
 
-3. **구현 패키지 안내**:
-   - 각 대안 방법론을 구현할 수 있는 Python 패키지명과 R 패키지명
-   - 핵심 함수/명령어 1~2개 (예: \`did.att_gt()\`, \`synthdid::synthdid_estimate()\`)
+## 6-2. 더 효과적인 대안 방법론 제안
+- 이 논문의 연구 목적을 더 잘 달성할 수 있는 **최신 대안 방법론 2~3가지** 제안
+- 각 대안이 현재 방법론의 어떤 한계를 극복하는지 구체적으로 설명
+- "이 방식보다 [대안 방법론]을 사용하면 [구체적 이점]에서 더 유리하다" 형식으로 작성
+- 대표 논문/제안자 인용 (예: "Callaway & Sant'Anna, 2021")
+- 구현 패키지: Python 패키지명 + R 패키지명 + 핵심 함수 1~2개
 
-이 Step 6는 학생이 "논문이 이렇게 분석했지만, 최근에는 이런 방법도 있다"는 시야를 갖도록 하기 위함입니다.`;
+## 6-3. 내적 타당성 및 강건성 우려
+- 이 연구 설계에서 발생할 수 있는 **내생성(endogeneity)** 또는 **선택편향(selection bias)** 문제
+- 저자가 수행했어야 하지만 빠진 것으로 보이는 **강건성 검정(robustness check)** 제안 2~3가지
+- 예: 위약 검정(placebo test), 도구변수 타당성 검정, 표본 제한(subsample) 분석 등
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Part III: 연구 확장 및 꼬리 물기 (Future Research Ideas)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+현재 연구 결과를 바탕으로 **파생 가능한 새로운 연구 주제 아이디어 3가지**를 제안하세요.
+각 아이디어에 대해 다음 형식으로 작성:
+
+## 아이디어 1: [연구 제목]
+- **확장 방향**: 현재 연구의 어떤 한계를 극복하거나, 어떤 측면을 심화하는지
+- **필요 데이터/방법론**: 추가로 필요한 데이터 유형과 적합한 분석 방법
+- **기대 결과**: 예상되는 발견과 학술적/정책적 함의
+- **실현 가능성**: 현재 데이터/프레임워크 내에서 실현 가능한 정도 (상/중/하)
+
+(예시 방향: "횡단면→시계열 확장", "비정형 데이터 결합", "이질적 효과 탐색", "국가간/지역간 비교", "인과적 기제(mechanism) 규명" 등)
+
+한국어로 작성하세요. 학술 용어는 영문을 병기(괄호)하세요.`;
 
   return await callGemini(apiKey, prompt, API.tokens.interpretation);
 }

@@ -95,9 +95,21 @@ function buildStatExtractionPrompt(paperText, paperContext) {
     structureExample = '데이터 설명 (예: 10000 samples, 50 features, binary classification)';
     roleOptions = 'target/feature/id';
     modelDesc = '모형 설명 (예: Random Forest with 100 trees)';
+  } else if (category === 'causal_ml') {
+    structureExample = '고차원 관측 데이터 설명 (예: 5000 obs, 30 covariates, binary treatment)';
+    roleOptions = 'outcome/treatment/confounder/moderator';
+    modelDesc = '인과 모형 설명 (예: DML with Y = θ(X)·T + g(X) + ε, Causal Forest for CATE)';
+  } else if (category === 'unstructured_data') {
+    structureExample = '비정형 데이터 설명 (예: 10000 documents corpus, 300-dim embeddings, 5 categories)';
+    roleOptions = 'text/label/embedding/feature/metadata';
+    modelDesc = '분석 모형 설명 (예: BERT fine-tuning for 5-class classification, LDA K=10 topics)';
+  } else if (category === 'causal_inference' || category === 'panel') {
+    structureExample = '패널/인과추론 데이터 설명 (예: panel 162 counties × 6 years, staggered treatment adoption)';
+    roleOptions = 'dependent/independent/control/treatment/instrument/time/entity';
+    modelDesc = '인과 모형 설명 (예: Staggered DID with TWFE, 또는 Synthetic Control, 또는 IV/2SLS)';
   } else {
-    // regression, panel, 기본값
-    structureExample = '데이터 구조 설명 (예: panel 162 counties × 6 years, 또는 cross-section N=5000)';
+    // regression, 기본값
+    structureExample = '데이터 구조 설명 (예: cross-section N=5000)';
     roleOptions = 'dependent/independent/control/instrument';
     modelDesc = '핵심 분석 모형을 수식 또는 문장으로 설명';
   }
