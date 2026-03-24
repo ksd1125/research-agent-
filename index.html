@@ -118,43 +118,85 @@
 
     <!-- 패널: 개요 -->
     <div class="result-panel active" id="panel-overview">
-      <section class="card">
-        <div class="card-title">📑 논문 구조 색인</div>
-        <div id="section-index" class="section-index-wrap"></div>
-      </section>
+      <div class="panel-window">
+        <div class="panel-window-header">
+          <span class="panel-window-icon">📋</span>
+          <span class="panel-window-title">논문 구조 색인</span>
+        </div>
+        <div class="panel-window-body">
+          <div id="section-index" class="section-index-wrap"></div>
+        </div>
+      </div>
     </div>
 
     <!-- 패널: 분석 -->
     <div class="result-panel" id="panel-analysis">
-      <div id="analysis-blocks"></div>
+      <div class="panel-window">
+        <div class="panel-window-header">
+          <span class="panel-window-icon">📊</span>
+          <span class="panel-window-title">방법론 분석</span>
+        </div>
+        <div class="panel-window-body">
+          <div id="analysis-blocks"></div>
+        </div>
+      </div>
     </div>
 
     <!-- 패널: 코드 -->
     <div class="result-panel" id="panel-code">
-      <div id="code-blocks"></div>
+      <div class="panel-window">
+        <div class="panel-window-header">
+          <span class="panel-window-icon">💻</span>
+          <span class="panel-window-title">재현 코드</span>
+        </div>
+        <div class="panel-window-body">
+          <div id="code-blocks"></div>
+        </div>
+      </div>
     </div>
 
     <!-- 패널: 데이터 -->
     <div class="result-panel" id="panel-data">
-      <div id="data-blocks"></div>
+      <div class="panel-window">
+        <div class="panel-window-header">
+          <span class="panel-window-icon">🧪</span>
+          <span class="panel-window-title">실습 데이터</span>
+        </div>
+        <div class="panel-window-body">
+          <div id="data-blocks"></div>
+        </div>
+      </div>
     </div>
 
     <!-- 패널: 해석 가이드 -->
     <div class="result-panel" id="panel-interpret">
-      <div id="interpret-blocks"></div>
+      <div class="panel-window">
+        <div class="panel-window-header">
+          <span class="panel-window-icon">📖</span>
+          <span class="panel-window-title">결과 해석 가이드</span>
+        </div>
+        <div class="panel-window-body">
+          <div id="interpret-blocks"></div>
+        </div>
+      </div>
     </div>
 
     <!-- 패널: Q&A -->
     <div class="result-panel" id="panel-qna">
-      <section class="card" id="qna-card">
-        <div class="card-title">💬 논문 Q&A</div>
-        <div class="text-xs text-muted mb-8">분석 방법이나 결과에 대해 질문하면 논문 맥락 기반으로 답변합니다. What-if 시나리오("만약 ~을 제거하면?")나 새로운 아이디어 제안도 가능합니다.</div>
-        <div id="qna-chat" class="qna-chat"></div>
-        <div class="qna-input-wrap">
-          <input type="text" id="qna-input" class="qna-input" placeholder="예: 통제변수를 제거하면 결과가 어떻게 바뀔까요?">
-          <button id="qna-send" class="btn-primary qna-send-btn">전송</button>
+      <div class="panel-window panel-window--qna">
+        <div class="panel-window-header">
+          <span class="panel-window-icon">💬</span>
+          <span class="panel-window-title">논문 Q&A</span>
         </div>
-      </section>
+        <div class="panel-window-body" id="qna-card">
+          <div class="text-xs text-muted mb-8">분석 방법이나 결과에 대해 질문하면 논문 맥락 기반으로 답변합니다. What-if 시나리오나 새로운 아이디어 제안도 가능합니다.</div>
+          <div id="qna-chat" class="qna-chat"></div>
+          <div class="qna-input-wrap">
+            <input type="text" id="qna-input" class="qna-input" placeholder="예: 통제변수를 제거하면 결과가 어떻게 바뀔까요?">
+            <button id="qna-send" class="btn-primary qna-send-btn">전송</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <button class="home-link">← 새 논문 분석하기</button>
