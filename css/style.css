@@ -1023,6 +1023,419 @@ pre {
 .text-danger { color: var(--color-danger); }
 .text-primary { color: var(--color-primary); }
 
+/* ----- Data Structure Card (v5) ----- */
+.data-structure-card {
+  border-top: 1px dashed var(--color-border);
+  padding-top: 14px;
+}
+.data-structure-desc {
+  background: #E8F4F8;
+  border-left: 3px solid var(--color-primary);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--color-primary-dark);
+  line-height: 1.7;
+}
+
+/* Variable Table */
+.variable-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  margin-top: 10px;
+}
+.variable-table th {
+  background: var(--color-primary);
+  color: #FFF;
+  padding: 6px 8px;
+  text-align: center;
+  font-weight: 500;
+  font-size: 10px;
+}
+.variable-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: center;
+  font-size: 10px;
+}
+.variable-table tr:nth-child(even) td {
+  background: var(--color-bg);
+}
+.variable-table .var-role {
+  font-weight: 600;
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.variable-table .role-dependent { background: #FFEBEE; color: #C62828; }
+.variable-table .role-independent { background: #E3F2FD; color: #1565C0; }
+.variable-table .role-control { background: #F3E5F5; color: #7B1FA2; }
+.variable-table .role-treatment { background: #FFF3E0; color: #E65100; }
+.variable-table .role-time { background: #E0F2F1; color: #00695C; }
+.variable-table .role-entity { background: #EFEBE9; color: #4E342E; }
+
+/* Data Preview */
+.data-preview {
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+}
+.data-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9px;
+  font-family: 'Consolas', monospace;
+}
+.data-preview th {
+  background: #F0F0F0;
+  padding: 4px 6px;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.data-preview td {
+  padding: 3px 6px;
+  border-bottom: 1px solid #EEE;
+}
+
+/* ----- Step Executor (v5 분석 실습) ----- */
+.step-executor {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+.step-executor:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.step-executor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+}
+.step-executor-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.step-executor-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #FFF;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.step-executor-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.step-executor-desc {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  margin-left: 32px;
+}
+.btn-execute {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1.5px solid var(--color-primary);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+  white-space: nowrap;
+}
+.btn-execute:hover {
+  background: var(--color-primary);
+  color: #FFF;
+}
+.btn-execute:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-execute.loading {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary-light);
+  color: var(--color-primary);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.step-executor-body {
+  padding: 0 14px 14px;
+}
+.step-code-wrap {
+  margin-top: 10px;
+}
+.step-code-toggle {
+  font-size: 10px;
+  color: var(--color-primary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.step-code-toggle:hover {
+  text-decoration: underline;
+}
+.step-code-content {
+  display: none;
+  margin-top: 6px;
+}
+.step-code-content.visible {
+  display: block;
+}
+.step-code-content pre {
+  max-height: 300px;
+  overflow: auto;
+}
+
+/* Step Result */
+.step-result {
+  margin-top: 12px;
+  animation: fadeInUp 0.3s ease;
+}
+.step-result-table {
+  background: #FAFBFC;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-x: auto;
+  margin-bottom: 8px;
+}
+.step-result-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.step-result-table th {
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  padding: 5px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+}
+.step-result-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #EEE;
+  text-align: center;
+  font-size: 10px;
+}
+.step-result-chart {
+  background: #F8F5FF;
+  border-left: 3px solid #7C4DFF;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: #333;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+.step-result-interpretation {
+  background: var(--color-accent-light);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: #412402;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+.step-result-comparison {
+  background: #FFF8E1;
+  border-left: 3px solid #FFA000;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 8px 12px;
+  font-size: 10px;
+  color: #5D4037;
+  line-height: 1.6;
+}
+
+/* Step completed state */
+.step-executor.completed .step-executor-num {
+  background: var(--color-success);
+}
+.step-executor.completed .step-executor-header {
+  background: var(--color-success-light);
+}
+
+/* ----- Alternative Method Card (v5) ----- */
+.alt-method-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+.alt-method-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.alt-method-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #E8EAF6;
+  color: #283593;
+  font-weight: 600;
+}
+.alt-method-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.alt-method-desc {
+  font-size: 11px;
+  color: #555;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+.alt-method-ref {
+  font-size: 10px;
+  color: var(--color-text-light);
+  margin-bottom: 8px;
+}
+.alt-method-pkg {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.btn-alt-analyze {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid #283593;
+  background: var(--color-surface);
+  color: #283593;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+}
+.btn-alt-analyze:hover {
+  background: #283593;
+  color: #FFF;
+}
+.btn-alt-analyze:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.alt-result-wrap {
+  margin-top: 10px;
+  animation: fadeInUp 0.3s ease;
+}
+
+/* ----- Review Section ----- */
+.review-section {
+  display: none;
+}
+.review-section.active {
+  display: block;
+}
+.review-content {
+  font-size: 11px;
+  line-height: 1.8;
+  color: #333;
+}
+.review-content h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #7C4DFF;
+  margin: 14px 0 6px;
+}
+.review-content h4 {
+  font-size: 11px;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.review-content ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.review-content li {
+  margin-bottom: 4px;
+}
+
+/* ----- Comparison View (v5) ----- */
+.comparison-view {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.comparison-col {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+.comparison-col-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-primary-dark);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+@media (max-width: 600px) {
+  .comparison-view {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ----- Q&A Enhancement (v5) ----- */
+.qna-code-result {
+  background: #1E1E2E;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 6px;
+  font-family: 'Consolas', monospace;
+  font-size: 10px;
+  color: #CDD6F4;
+  overflow-x: auto;
+}
+.qna-result-table {
+  background: #F8F9FB;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-top: 6px;
+  font-size: 10px;
+  overflow-x: auto;
+}
+
 /* =========================================================
    반응형 타이포그래피 & 레이아웃 (Hybrid Mobile/PC)
    ========================================================= */
