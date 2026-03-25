@@ -1,162 +1,332 @@
 /**
- * pipeline.js — 멀티 에이전트 파이프라인 오케스트레이션
- * ResearchMethodAgent v4.0
+ * pipeline.js — v5 파이프라인 오케스트레이션
+ * ResearchMethodAgent v5.0
  *
- * PDF → MD 변환 → Agent 1 (문서 분석) → Agent 2 (통계 해석)
- * → Agent 3 (코드 생성) → Agent 4 (기술통계 추출)
+ * v5 파이프라인:
+ * [초기] PDF 텍스트 추출 → Agent 1 (문서분석) → Agent 4+ (데이터 구조)
+ *        → 탭 1 렌더링 (논문 개요 & 데이터 구조)
+ *
+ * [온디맨드] 탭 2 진입 → Agent 2 (통계해석) + Step 목록 생성
+ * [온디맨드] Step [실행] 클릭 → simulator.js (결과 시뮬레이션)
+ * [온디맨드] 탭 3 [리뷰 생성] 클릭 → Agent 6+ (리뷰 & 대안)
+ * [온디맨드] 탭 4 Q&A → Agent 5 (Q&A)
  */
 
 import { MESSAGES } from './config.js';
 import { escapeHtml } from './utils.js';
-import { runAgent1, runAgent2, runAgent3, createAbortController, abortPipeline } from './agents.js';
+import {
+  runAgent1,
+  runAgent2,
+  runAgent4Plus,
+  runReviewGuide,
+  runQnA,
+  createAbortController,
+  abortPipeline,
+  getAnalysisProfile,
+} from './agents.js';
 import { getExtractedText } from './pdf.js';
-import { convertPdfToMarkdown, extractDescriptiveStats } from './mockdata.js';
+import { convertPdfToMarkdown } from './mockdata.js';
+import { getStepsForCategory } from './steps.js';
+import { simulateExecution, simulateAlternativeMethod } from './simulator.js';
 import * as ui from './ui.js';
 
+/* ============================================================
+   앱 상태 관리
+   ============================================================ */
+
+/** @type {Object} 파이프라인 전체 상태 */
+const state = {
+  apiKey: '',
+  paperText: '',           // 원본/변환된 논문 텍스트
+  docResult: null,         // Agent 1 결과
+  paperContext: null,      // Agent 1의 paper_context
+  methods: [],             // Agent 1의 detected_methods (최대 2개)
+  dataStructure: null,     // Agent 4+의 결과 (데이터 구조 + 변수 테이블)
+  statResults: {},         // Agent 2 결과 캐시: { methodIndex: statResult }
+  steps: {},               // Step 목록 캐시: { methodIndex: stepsArray }
+  simulationResults: {},   // 시뮬레이션 결과 캐시: { 'methodIdx-stepId': result }
+  reviewResult: null,      // Agent 6+ 결과 (peer, alternatives, future)
+  selectedMethod: 0,       // 현재 선택된 방법론 인덱스
+  depth: 'basic',          // 분석 깊이 (basic, intermediate, advanced)
+  selectedSections: [],    // 선택된 분석 대상 섹션
+};
+
 /**
- * 파이프라인 실행
+ * 상태 접근자
  */
-export async function runPipeline() {
-  const apiKey = ui.dom.apiKey.value.trim();
-  const textInput = ui.dom.txtInput.value.trim();
-  const currentTab = ui.getCurrentTab();
+export function getState() { return state; }
+export function getApiKey() { return state.apiKey; }
+export function getPaperText() { return state.paperText; }
+export function getPaperContext() { return state.paperContext; }
+export function getDataStructure() { return state.dataStructure; }
+export function getMethods() { return state.methods; }
+export function getDocResult() { return state.docResult; }
 
-  // ===== 입력 검증 =====
-  if (!apiKey)                               { ui.showStatus(MESSAGES.errors.noApiKey);    return; }
-  if (currentTab === 'pdf' && !getExtractedText()) { ui.showStatus(MESSAGES.errors.noPdfText);   return; }
-  if (currentTab === 'text' && !textInput)   { ui.showStatus(MESSAGES.errors.noTextInput); return; }
+/* ============================================================
+   Phase 1: 초기 파이프라인 (PDF 업로드 → Agent 1 → Agent 4+)
+   ============================================================ */
 
-  const rawInput = currentTab === 'pdf' ? getExtractedText() : textInput;
+/**
+ * 초기 파이프라인 실행
+ * @param {string} apiKey — Gemini API 키
+ * @param {string} depth — 분석 깊이 (basic/intermediate/advanced)
+ * @param {string[]} selectedSections — 분석 대상 섹션
+ */
+export async function runInitialPipeline(apiKey, depth, selectedSections) {
+  state.apiKey = apiKey;
+  state.depth = depth || 'basic';
+  state.selectedSections = selectedSections || [];
 
-  // ===== UI: 로딩 시작 =====
+  const rawInput = getExtractedText();
+
+  // 입력 검증
+  if (!apiKey)    { ui.showStatus(MESSAGES.errors.noApiKey);  return; }
+  if (!rawInput)  { ui.showStatus(MESSAGES.errors.noPdfText); return; }
+
+  // UI: 로딩 시작
   createAbortController();
   ui.showLoadingView();
 
   try {
-    // ===== Step 0: PDF → Markdown 변환 (PDF 탭인 경우) =====
+    // ===== Step 0: PDF → Markdown 변환 =====
+    ui.updateLoadingStep(0, 'running');
+    ui.setLoadingMessage('PDF 텍스트를 구조화된 마크다운으로 변환 중...');
+
     let inputText = rawInput;
-
-    if (currentTab === 'pdf') {
-      ui.setAgentStep(0);
-      ui.setProgress(2);
-      ui.setLoading(MESSAGES.loading.pdfToMd);
-
-      try {
-        inputText = await convertPdfToMarkdown(apiKey, rawInput);
-        // 변환된 MD를 UI에 저장 (나중에 다운로드 가능)
-        ui.setConvertedMarkdown(inputText);
-      } catch (err) {
-        // MD 변환 실패 시 원본 텍스트로 진행
-        console.warn('PDF→MD 변환 실패, 원본 텍스트 사용:', err.message);
-        inputText = rawInput;
-      }
+    try {
+      inputText = await convertPdfToMarkdown(apiKey, rawInput);
+    } catch (err) {
+      console.warn('PDF→MD 변환 실패, 원본 텍스트 사용:', err.message);
     }
+    state.paperText = inputText;
+    ui.updateLoadingStep(0, 'done');
 
-    // 원본 텍스트 저장 (Q&A용)
-    ui.setPaperText(inputText);
+    // ===== Step 1: Agent 1 — 문서 분석 =====
+    ui.updateLoadingStep(1, 'running');
+    ui.setLoadingMessage('논문의 학문 분야와 연구 방법론을 분석 중...');
 
-    // ===== Agent 1: 문서 분석 =====
-    ui.setAgentStep(1);
-    ui.setProgress(10);
-    ui.setLoading(MESSAGES.loading.agent1);
     const docResult = await runAgent1(apiKey, inputText);
-    const paperContext = docResult.paper_context || {};
-    const methods = (docResult.detected_methods || []).slice(0, 2);
-    ui.setProgress(25);
+    state.docResult = docResult;
+    state.paperContext = docResult.paper_context || {};
+    state.methods = (docResult.detected_methods || []).slice(0, 2);
+
+    ui.updateLoadingStep(1, 'done');
 
     // 방법론 미감지 시
-    if (methods.length === 0) {
-      docResult.methods = [];
-      docResult._debug = MESSAGES.errors.noMethods;
-      ui.renderResult(docResult);
-      ui.showResultView();
+    if (state.methods.length === 0) {
+      ui.showStatus(MESSAGES.errors.noMethods);
+      ui.showInputView();
       return;
     }
 
-    // ===== Agent 2 + 3: 각 방법론에 대해 순차 실행 =====
-    const finalMethods = [];
-    const progressPerMethod = 45 / methods.length;
-
-    for (let i = 0; i < methods.length; i++) {
-      const m = methods[i];
-      const idx = i + 1;
-      const total = methods.length;
-      const baseProgress = 25 + (i * progressPerMethod);
-
-      // Agent 2: 통계 분석
-      ui.setAgentStep(2);
-      ui.setProgress(Math.round(baseProgress));
-      ui.setLoading(MESSAGES.loading.agent2(
-        idx, total,
-        paperContext.domain || '해당 분야',
-        escapeHtml(m.raw_name)
-      ));
-      const statResult = await runAgent2(apiKey, m, paperContext);
-      ui.setProgress(Math.round(baseProgress + progressPerMethod * 0.4));
-
-      // Agent 3: 코드 생성
-      ui.setAgentStep(3);
-      ui.setProgress(Math.round(baseProgress + progressPerMethod * 0.5));
-      ui.setLoading(MESSAGES.loading.agent3(idx, total));
-      let codeResult;
-      try {
-        const { packages, pythonCode, rCode } = await runAgent3(
-          apiKey, statResult, paperContext, m.target_result_location, m
-        );
-        codeResult = {
-          packages,
-          python_code: pythonCode,
-          r_code: rCode,
-        };
-      } catch (err) {
-        codeResult = {
-          packages: { python: [], r: [] },
-          python_code: `# 코드 생성 실패\n# 오류: ${err.message}`,
-          r_code:      `# 코드 생성 실패\n# 오류: ${err.message}`,
-        };
-      }
-      ui.setProgress(Math.round(baseProgress + progressPerMethod));
-
-      // 결과 조합
-      finalMethods.push({
-        raw_name:        m.raw_name,
-        evidence:        m.evidence_text,
-        target_location: m.target_result_location,
-        source_section:  m.source_section || '',
-        standard_name:   statResult.standard_name,
-        concept:         statResult.concept,
-        why_used:        statResult.why_used,
-        steps:           statResult.steps,
-        packages:        codeResult.packages,
-        python_code:     codeResult.python_code,
-        r_code:          codeResult.r_code,
-      });
-    }
-
-    // ===== Agent 4: 기술통계 추출 (가상 데이터 준비) =====
-    ui.setAgentStep(4);
-    ui.setProgress(78);
-    ui.setLoading(MESSAGES.loading.agent4);
+    // ===== Step 2: Agent 4+ — 데이터 구조 추출 =====
+    ui.updateLoadingStep(2, 'running');
+    ui.setLoadingMessage('데이터 구조와 변수 정보를 추출 중...');
 
     try {
-      const descStats = await extractDescriptiveStats(apiKey, inputText, paperContext);
-      ui.setDescriptiveStats(descStats);
-      ui.setProgress(95);
+      const dataStructure = await runAgent4Plus(
+        apiKey, inputText, state.paperContext, state.methods
+      );
+      state.dataStructure = dataStructure;
     } catch (err) {
-      // Agent 4 실패해도 나머지 결과는 보여줌
-      console.warn('Agent 4 (기술통계 추출) 실패:', err.message);
-      ui.setDescriptiveStats(null);
+      console.warn('Agent 4+ (데이터 구조) 실패:', err.message);
+      state.dataStructure = null;
     }
+    ui.updateLoadingStep(2, 'done');
 
-    // ===== 결과 렌더링 =====
-    ui.setProgress(100);
-    docResult.methods = finalMethods;
-    ui.renderResult(docResult);
+    // ===== 결과 렌더링: 탭 1 =====
+    ui.renderInitialResult(docResult, state.dataStructure);
     ui.showResultView();
 
   } catch (err) {
-    // 에러 시 입력 화면으로 복귀
     ui.showInputView();
     ui.showStatus(`오류 발생: ${err.message}`);
   }
+}
+
+/* ============================================================
+   Phase 2: 온디맨드 — 탭 2 진입 시 Agent 2 + Step 목록 생성
+   ============================================================ */
+
+/**
+ * 방법론 통계 해석 + Step 목록 생성 (탭 2 진입 시)
+ * @param {number} methodIndex — 방법론 인덱스 (0 or 1)
+ * @returns {Promise<{ statResult: Object, steps: Array }>}
+ */
+export async function loadAnalysisSteps(methodIndex = 0) {
+  state.selectedMethod = methodIndex;
+  const method = state.methods[methodIndex];
+  if (!method) throw new Error('선택된 방법론이 없습니다.');
+
+  // 캐시 확인
+  if (state.statResults[methodIndex] && state.steps[methodIndex]) {
+    return {
+      statResult: state.statResults[methodIndex],
+      steps: state.steps[methodIndex],
+    };
+  }
+
+  // Agent 2: 통계 해석
+  const statResult = await runAgent2(state.apiKey, method, state.paperContext);
+  state.statResults[methodIndex] = statResult;
+
+  // Step 목록 생성 (steps.js)
+  const category = state.paperContext.analysis_category || 'regression';
+  const steps = getStepsForCategory(category, method, state.paperContext);
+  state.steps[methodIndex] = steps;
+
+  return { statResult, steps };
+}
+
+/* ============================================================
+   Phase 3: 온디맨드 — Step [실행] 클릭 시 시뮬레이션
+   ============================================================ */
+
+/**
+ * Step 실행 (결과 시뮬레이션)
+ * @param {number} methodIndex — 방법론 인덱스
+ * @param {string} stepId — Step ID
+ * @param {string} code — 실행할 코드
+ * @param {string} lang — 'python' or 'r'
+ * @returns {Promise<Object>} — { table, chartDesc, interpretation, paperComparison }
+ */
+export async function executeStep(methodIndex, stepId, code, lang) {
+  const cacheKey = `${methodIndex}-${stepId}-${lang}`;
+
+  // 캐시 확인
+  if (state.simulationResults[cacheKey]) {
+    return state.simulationResults[cacheKey];
+  }
+
+  const method = state.methods[methodIndex];
+  const keyVars = method?.key_variables || {};
+  const dataStats = state.dataStructure?.variables || [];
+
+  // 기술통계를 컨텍스트로 구성
+  const descriptiveStats = {};
+  dataStats.forEach(v => {
+    if (v.name_en && v.mean !== null) {
+      descriptiveStats[v.name_en] = {
+        mean: v.mean, sd: v.sd, min: v.min, max: v.max,
+      };
+    }
+  });
+
+  const context = {
+    domain: state.paperContext.domain,
+    analysisType: method?.analysis_type,
+    outcome: keyVars.outcome,
+    treatment: keyVars.treatment,
+    dataCharacteristics: state.paperContext.data_characteristics,
+    descriptiveStats,
+  };
+
+  const result = await simulateExecution(state.apiKey, code, lang, context);
+  state.simulationResults[cacheKey] = result;
+  return result;
+}
+
+/* ============================================================
+   Phase 4: 온디맨드 — 탭 3 리뷰 & 대안 방법론
+   ============================================================ */
+
+/**
+ * 리뷰 & 대안 방법론 생성 (탭 3에서 [리뷰 & 대안 생성] 클릭 시)
+ * @param {number} methodIndex — 방법론 인덱스
+ * @returns {Promise<{ peer: string, alternatives: string, future: string }>}
+ */
+export async function loadReview(methodIndex = 0) {
+  // 캐시 확인
+  if (state.reviewResult) {
+    return state.reviewResult;
+  }
+
+  const method = state.methods[methodIndex];
+  const statResult = state.statResults[methodIndex] || {
+    standard_name: method?.raw_name || '미지정',
+    steps: [],
+  };
+
+  const result = await runReviewGuide(
+    state.apiKey, state.paperContext, statResult, method
+  );
+  state.reviewResult = result;
+  return result;
+}
+
+/**
+ * 대안 방법론으로 분석 시뮬레이션
+ * @param {string} altMethodName — 대안 방법론 이름
+ * @param {number} methodIndex — 원본 방법론 인덱스
+ * @returns {Promise<Object>}
+ */
+export async function executeAlternativeMethod(altMethodName, methodIndex = 0) {
+  const method = state.methods[methodIndex];
+  const keyVars = method?.key_variables || {};
+  const dataStats = state.dataStructure?.variables || [];
+
+  const descriptiveStats = {};
+  dataStats.forEach(v => {
+    if (v.name_en && v.mean !== null) {
+      descriptiveStats[v.name_en] = {
+        mean: v.mean, sd: v.sd, min: v.min, max: v.max,
+      };
+    }
+  });
+
+  const context = {
+    domain: state.paperContext.domain,
+    originalMethod: method?.raw_name,
+    outcome: keyVars.outcome,
+    treatment: keyVars.treatment,
+    dataCharacteristics: state.paperContext.data_characteristics,
+    descriptiveStats,
+  };
+
+  return await simulateAlternativeMethod(
+    state.apiKey, altMethodName, context, null
+  );
+}
+
+/* ============================================================
+   Phase 5: 온디맨드 — 탭 4 Q&A
+   ============================================================ */
+
+/**
+ * Q&A 질문 전송
+ * @param {string} question — 사용자 질문
+ * @returns {Promise<string>} — 답변 텍스트
+ */
+export async function sendQnA(question) {
+  return await runQnA(
+    state.apiKey, question, state.paperText, state.paperContext
+  );
+}
+
+/* ============================================================
+   유틸리티
+   ============================================================ */
+
+/**
+ * 파이프라인 취소 (agents.js에서 import 후 re-export)
+ */
+export { abortPipeline };
+
+/**
+ * 상태 초기화
+ */
+export function resetState() {
+  state.apiKey = '';
+  state.paperText = '';
+  state.docResult = null;
+  state.paperContext = null;
+  state.methods = [];
+  state.dataStructure = null;
+  state.statResults = {};
+  state.steps = {};
+  state.simulationResults = {};
+  state.reviewResult = null;
+  state.selectedMethod = 0;
+  state.depth = 'basic';
+  state.selectedSections = [];
 }

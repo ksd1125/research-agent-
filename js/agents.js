@@ -1,6 +1,6 @@
 /**
  * agents.js — 에이전트 프롬프트 정의 및 API 호출
- * ResearchMethodAgent v4.0
+ * ResearchMethodAgent v5.0
  */
 
 import { API, MESSAGES } from './config.js';
@@ -362,7 +362,7 @@ function buildAgent3MetaPrompt(standardName, paperContext) {
 /**
  * 분석 카테고리에 따른 동적 라이브러리 및 데이터 구조 힌트
  */
-function getAnalysisProfile(category, analysisType, lang) {
+export function getAnalysisProfile(category, analysisType, lang) {
   const profiles = {
     regression: {
       python: 'pandas, numpy, statsmodels, scipy',
@@ -768,10 +768,10 @@ export async function runInterpretationGuide(apiKey, methodResult, paperContext,
 3. 다른 추정 방법(예: OLS vs IV, Logit vs Probit)으로 결과 비교`;
   }
 
-  const prompt = `당신은 통계 분석 교육 전문가이자, 학술 논문 동료 평가(Peer Review) 전문가입니다.
+  const prompt = `당신은 통계 분석 교육 전문가이자 학술 논문 평가 전문가입니다. 결과 해석, 독립적 평가, 유사논문 비교를 3파트로 작성합니다.
 
 학생이 논문의 "${targetLocation}" 결과를 가상 데이터로 재현했습니다.
-결과를 이해하고, 비판적으로 평가하고, 후속 연구로 확장할 수 있도록 **3파트 가이드**를 작성하세요.
+결과를 저자 관점에서 해석(70%)하고, AI 평가자로서 독립 평가(30%)하고, 유사논문과 비교 분석하세요.
 
 [방법론]: ${methodResult.standard_name}
 [분석 유형]: ${analysisType || '미지정'}
@@ -781,10 +781,11 @@ export async function runInterpretationGuide(apiKey, methodResult, paperContext,
 [분석 절차]: ${JSON.stringify(methodResult.steps)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Part I: 결과 해석 가이드 (Objective Interpretation)
+# Part I: 저자 관점의 결과 해석 (Author's Interpretation — 70%)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**일반론이 아닌 이 논문에 특화된 내용**으로 작성하세요:
+논문 저자의 시각에서 결과를 해석하세요. 논문 본문에 기술된 해석을 최대한 충실하게 반영하되,
+통계적 결과를 읽는 방법을 구체적으로 안내하세요.
 
 ## Step 1: 결과 테이블/그림 구조 파악
 - ${targetLocation}의 구조(행/열, 패널, 범례 등) 설명
@@ -805,45 +806,344 @@ ${step2Guide}
 ${step5Tasks}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Part II: 동료 평가자의 비판적 검토 (Peer Reviewer Critique)
+# Part II: AI 평가자의 독립 평가 (AI Assessment — 30%)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-당신은 이제 **이 논문의 엄격한 동료 심사위원(Peer Reviewer)**입니다.
-"만약 내가 이 논문을 심사한다면?" 관점에서 다음을 분석하세요:
+당신은 이제 **독립적 평가자(evaluator)**입니다. 저자의 해석에 동의하는 부분과 의문을 제기하는 부분을 구분하여 작성하세요.
 
-## 6-1. 방법론 한계 및 가정 위반 가능성
-- 이 논문이 사용한 "${methodResult.standard_name}" 방법론의 **핵심 가정(assumptions)** 3가지를 나열
-- 이 논문의 구체적 맥락(분야: ${paperContext.domain}, 데이터: ${paperContext.data_characteristics})에서 **어떤 가정이 위반될 가능성이 있는지** 구체적으로 지적
-- 가정 위반이 결과에 미칠 수 있는 **편향(bias)의 방향과 크기**를 추정
+## 평가 1: 방법론 적절성 평가
+- 이 연구 목적에 "${methodResult.standard_name}" 방법론이 **최적의 선택이었는지** 평가
+- 핵심 가정(assumptions) 위반 가능성과 결과에 미치는 영향
+- "만약 내가 심사위원이라면 지적할 사항" 2~3가지
 
-## 6-2. 더 효과적인 대안 방법론 제안
-- 이 논문의 연구 목적을 더 잘 달성할 수 있는 **최신 대안 방법론 2~3가지** 제안
-- 각 대안이 현재 방법론의 어떤 한계를 극복하는지 구체적으로 설명
-- "이 방식보다 [대안 방법론]을 사용하면 [구체적 이점]에서 더 유리하다" 형식으로 작성
-- 대표 논문/제안자 인용 (예: "Callaway & Sant'Anna, 2021")
-- 구현 패키지: Python 패키지명 + R 패키지명 + 핵심 함수 1~2개
+## 평가 2: 결과의 강건성 평가
+- 이 결과가 민감도 분석(robustness check)을 통과할 수 있는지
+- 내생성(endogeneity) 또는 선택편향(selection bias) 우려
+- 빠져있는 강건성 검정 제안 (위약검정, 표본제한 분석 등)
 
-## 6-3. 내적 타당성 및 강건성 우려
-- 이 연구 설계에서 발생할 수 있는 **내생성(endogeneity)** 또는 **선택편향(selection bias)** 문제
-- 저자가 수행했어야 하지만 빠진 것으로 보이는 **강건성 검정(robustness check)** 제안 2~3가지
-- 예: 위약 검정(placebo test), 도구변수 타당성 검정, 표본 제한(subsample) 분석 등
+## 평가 3: 대안 방법론 제안
+- 더 효과적인 대안 방법론 2~3가지 (구체적 이유와 함께)
+- 각 대안의 Python/R 패키지명 + 핵심 함수
+- 대표 논문/제안자 인용
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Part III: 연구 확장 및 꼬리 물기 (Future Research Ideas)
+# Part III: 유사 논문 비교 분석 (Comparative Analysis)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-현재 연구 결과를 바탕으로 **파생 가능한 새로운 연구 주제 아이디어 3가지**를 제안하세요.
-각 아이디어에 대해 다음 형식으로 작성:
+이 논문과 동일하거나 유사한 주제/방법론을 사용한 **최근 학술 논문 3~5편**을 제시하고 비교 분석하세요.
 
-## 아이디어 1: [연구 제목]
-- **확장 방향**: 현재 연구의 어떤 한계를 극복하거나, 어떤 측면을 심화하는지
-- **필요 데이터/방법론**: 추가로 필요한 데이터 유형과 적합한 분석 방법
-- **기대 결과**: 예상되는 발견과 학술적/정책적 함의
-- **실현 가능성**: 현재 데이터/프레임워크 내에서 실현 가능한 정도 (상/중/하)
+## 유사 논문 1: [저자(연도), 논문제목]
+- **공통점**: 이 논문과 공유하는 방법론/데이터/주제
+- **차이점**: 이 논문과 다른 접근법이나 결과
+- **시사점**: 이 논문의 결과를 보완하거나 반박하는 증거
 
-(예시 방향: "횡단면→시계열 확장", "비정형 데이터 결합", "이질적 효과 탐색", "국가간/지역간 비교", "인과적 기제(mechanism) 규명" 등)
+(3~5편 반복)
+
+## 종합 비교 평가
+- 이 논문의 기여가 기존 문헌 대비 어떤 부분에서 차별화되는지
+- 기존 문헌에서 이 논문이 놓치고 있는 관점이 있다면 제시
 
 한국어로 작성하세요. 학술 용어는 영문을 병기(괄호)하세요.`;
 
   return await callGemini(apiKey, prompt, API.tokens.interpretation);
+}
+
+/**
+ * 사고확장: 데이터 변형 아이디어 생성
+ * @param {string} apiKey
+ * @param {Object} paperContext — 논문 컨텍스트
+ * @param {Object} methodResult — Agent 2 분석 결과
+ * @returns {Promise<string>} — 마크다운 텍스트
+ */
+export async function runExpandIdeas(apiKey, paperContext, methodResult) {
+  const prompt = `당신은 연구 설계 전문가입니다.
+
+[논문 분야]: ${paperContext.domain || '사회과학'}
+[분석 카테고리]: ${paperContext.analysis_category || '미지정'}
+[데이터 특성]: ${paperContext.data_characteristics || '일반 데이터'}
+[현재 방법론]: ${methodResult.standard_name || '미지정'}
+[핵심 변수]: ${JSON.stringify(methodResult.key_variables || {})}
+
+현재 논문의 데이터를 **변형하거나 확장**하여 새로운 연구 질문을 탐구할 수 있는 아이디어 3~5가지를 제안하세요.
+
+각 아이디어에 대해:
+## 아이디어 N: [제목]
+- **변형 방향**: 어떤 데이터/변수를 어떻게 바꾸는지 (예: "소매업 → 음식점업", "횡단면 → 시계열", "국내 → 국가간 비교")
+- **연구 질문**: 변형된 데이터로 답할 수 있는 새로운 질문
+- **예상 가설**: 기대되는 결과 방향과 근거
+- **필요 데이터**: 추가로 수집해야 할 데이터와 출처
+- **분석 방법**: 적합한 분석 방법론과 코드 수정 방향
+- **실현 가능성**: 상/중/하 + 이유
+
+아이디어는 구체적이고 실행 가능해야 합니다. 단순한 제안이 아니라 "이렇게 하면 이런 결과가 나올 것이다"까지 추론하세요.
+한국어로 작성하세요. 학술 용어는 영문을 병기(괄호)하세요.`;
+
+  return await callGemini(apiKey, prompt, API.tokens.interpretation);
+}
+
+/**
+ * 사고확장: 대안 방법론 상세 제안
+ * @param {string} apiKey
+ * @param {Object} paperContext
+ * @param {Object} methodResult
+ * @returns {Promise<string>}
+ */
+export async function runExpandMethods(apiKey, paperContext, methodResult) {
+  const prompt = `당신은 계량경제학/통계방법론 전문가입니다.
+
+[논문 분야]: ${paperContext.domain || '사회과학'}
+[현재 방법론]: ${methodResult.standard_name || '미지정'}
+[분석 유형]: ${methodResult.analysis_type || '미지정'}
+[데이터 특성]: ${paperContext.data_characteristics || '일반 데이터'}
+
+현재 논문이 사용한 "${methodResult.standard_name}" 대신 사용할 수 있는 **대안 방법론 3~4가지**를 상세하게 제안하세요.
+
+각 대안에 대해:
+## 대안 N: [방법론 명칭]
+- **왜 대안인가**: 현재 방법론의 어떤 한계를 극복하는지
+- **핵심 원리**: 이 방법론의 핵심 아이디어 (2~3문장)
+- **장점**: 현재 방법론 대비 구체적 장점
+- **단점/한계**: 이 대안의 한계와 적용 조건
+- **적용 시 예상 결과**: "이 방법론을 적용하면 [구체적 변화]가 예상됩니다"
+- **구현 코드 스니펫**:
+  - Python: 핵심 코드 3~5줄 (패키지명 + 주요 함수)
+  - R: 핵심 코드 3~5줄 (패키지명 + 주요 함수)
+- **대표 논문**: 저자(연도), "논문 제목", 저널명
+
+단순 나열이 아니라, "이 논문에 이 방법론을 적용하면 구체적으로 어떤 결과가 달라지는지"를 추론하세요.
+한국어로 작성하세요. 코드와 학술 용어는 영문을 유지하세요.`;
+
+  return await callGemini(apiKey, prompt, API.tokens.interpretation);
+}
+
+/* ============================================================
+   Agent 4+: 데이터 구조 설명 + 기술통계 추출 + 변수 테이블 (v5 신규)
+   ============================================================ */
+
+/**
+ * Agent 4+ 프롬프트 — 데이터 구조, 변수 목록, 기술통계를 한 번에 추출
+ * @param {string} paperText — 논문 전문
+ * @param {Object} paperContext — Agent 1의 paper_context
+ * @param {Array} detectedMethods — Agent 1의 detected_methods
+ * @returns {string} 프롬프트
+ */
+function buildAgent4PlusPrompt(paperText, paperContext, detectedMethods) {
+  const category = paperContext.analysis_category || 'regression';
+  const keyVars = detectedMethods?.[0]?.key_variables || {};
+
+  // 카테고리별 데이터 구조 힌트
+  const structureHints = {
+    regression: '횡단면 데이터(cross-section): N개 관측치, 단일 시점',
+    causal_inference: '패널 데이터(panel): entity × time 구조, 개체 추적, 처리군/통제군',
+    experimental: '실험 데이터: 처리군/통제군, 요인설계(factorial design)',
+    spatial: '공간 데이터: 지역 단위, 좌표/공간 가중행렬 포함',
+    time_series: '시계열 데이터: 시간 인덱스, 단일/다변량',
+    machine_learning: '특성-목표 데이터: features × samples, train/test 분할',
+    causal_ml: '고차원 관측 데이터: 처리변수 + 다수 공변량 + 결과변수',
+    unstructured_data: '비정형 데이터: 텍스트/이미지/임베딩 벡터',
+    bayesian: '관측 데이터 + 사전분포 정보',
+    sem: '설문/관측 데이터: 다중 관측변수 → 잠재변수 구조',
+    survival: '생존 데이터: 시간-이벤트, 중도절단 포함',
+    meta_analysis: '메타 데이터: 개별 연구별 효과크기/표준오차/표본크기',
+  };
+
+  const hint = structureHints[category] || structureHints.regression;
+
+  return `당신은 데이터 분석 전문가입니다. 아래 논문에서 데이터 구조와 변수 정보를 추출하세요.
+반드시 순수 JSON만 출력하세요. 첫 글자는 반드시 { 이어야 합니다. 마크다운 코드블록은 절대 사용하지 마세요.
+
+[논문 분야]: ${paperContext.domain || '사회과학'}
+[분석 카테고리]: ${category}
+[데이터 구조 힌트]: ${hint}
+[데이터 특성]: ${paperContext.data_characteristics || '알 수 없음'}
+${keyVars.outcome ? `[종속변수]: ${keyVars.outcome}` : ''}
+${keyVars.treatment ? `[핵심 독립변수]: ${keyVars.treatment}` : ''}
+${keyVars.controls ? `[통제변수]: ${keyVars.controls}` : ''}
+
+논문 텍스트 (앞부분):
+${paperText.substring(0, 15000)}
+
+아래 JSON 형식으로 출력하세요:
+{
+  "data_description": "이 논문이 사용하는 데이터에 대한 구체적 설명 (예: '249개 시군구 × 7년(2005-2011) 패널 데이터'). 2~3문장.",
+  "data_type": "panel | cross_section | time_series | experimental | spatial | text_corpus | image | meta | other",
+  "sample_info": {
+    "n_obs": "전체 관측치 수 (논문에 명시된 경우, 없으면 추정치)",
+    "n_entities": "개체 수 (패널인 경우)",
+    "n_periods": "기간 수 (패널/시계열인 경우)",
+    "time_range": "관측 기간 (예: '2005-2011')"
+  },
+  "variables": [
+    {
+      "name_kr": "한국어 변수명",
+      "name_en": "영문 변수명 (snake_case)",
+      "role": "종속 | 독립 | 통제 | 도구 | 매개 | 조절 | 고정효과 | 기타",
+      "type": "연속 | 이진 | 범주 | 순서 | 시간 | ID",
+      "mean": "평균 (논문에서 추출, 없으면 null)",
+      "sd": "표준편차 (논문에서 추출, 없으면 null)",
+      "min": "최솟값 (없으면 null)",
+      "max": "최댓값 (없으면 null)",
+      "description": "변수 설명 (15자 이내)"
+    }
+  ],
+  "structure_diagram": "데이터 구조를 텍스트로 도식화. 패널이면 'entity_id × year → treatment, outcome, controls', 실험이면 '집단(처리/통제) × 시점(사전/사후)' 등. 1~2줄.",
+  "limitations": "이 데이터의 알려진 한계점 (1~2문장). 예: '가상 데이터는 원본의 기술통계를 기반으로 역산한 것이므로 변수 간 복잡한 상관구조가 완벽히 재현되지 않을 수 있습니다.'"
+}
+
+중요:
+- variables 배열에는 논문에서 식별 가능한 **모든 주요 변수** (최소 5개, 최대 15개)를 포함
+- 기술통계(mean, sd, min, max)는 논문의 Table 1(기술통계표)에서 직접 추출
+- 기술통계가 논문에 없으면 데이터 특성과 분야 지식으로 합리적으로 추정하고, 추정값에는 (추정) 표시
+- name_en은 코드에서 바로 사용할 수 있는 영문 snake_case로 작성`;
+}
+
+/**
+ * Agent 4+ 실행 — 데이터 구조 + 기술통계 + 변수 테이블 통합 추출
+ * v5에서 Agent 1 직후에 호출 (파이프라인 초기)
+ * @param {string} apiKey
+ * @param {string} paperText — 논문 전문
+ * @param {Object} paperContext — Agent 1의 paper_context
+ * @param {Array} detectedMethods — Agent 1의 detected_methods
+ * @returns {Promise<Object>} — 데이터 구조 정보
+ */
+export async function runAgent4Plus(apiKey, paperText, paperContext, detectedMethods) {
+  const prompt = buildAgent4PlusPrompt(paperText, paperContext, detectedMethods);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent4Plus || 4000);
+
+  try {
+    const result = safeParseJSON(raw);
+    // 변수 배열 검증
+    if (!Array.isArray(result.variables)) {
+      result.variables = [];
+    }
+    return result;
+  } catch (err) {
+    // 강제 복구 시도
+    const start = raw.indexOf('{');
+    if (start >= 0) {
+      let partial = raw.slice(start).replace(/,\s*$/, '');
+      const ob = (partial.match(/\[/g) || []).length - (partial.match(/\]/g) || []).length;
+      const oc = (partial.match(/\{/g) || []).length - (partial.match(/\}/g) || []).length;
+      for (let i = 0; i < ob; i++) partial += ']';
+      for (let i = 0; i < oc; i++) partial += '}';
+      try { return JSON.parse(partial); }
+      catch { /* 아래 기본값 반환 */ }
+    }
+    // 기본 구조 반환
+    return {
+      data_description: '데이터 구조를 추출하지 못했습니다.',
+      data_type: 'unknown',
+      sample_info: {},
+      variables: [],
+      structure_diagram: '',
+      limitations: '데이터 구조 추출에 실패했습니다. 논문의 기술통계 표를 직접 참조해주세요.',
+    };
+  }
+}
+
+/* ============================================================
+   Agent 6+: 리뷰 & 대안 방법론 (v5 — 탭3 온디맨드)
+   ============================================================ */
+
+/**
+ * 리뷰 가이드 생성 — 동료 리뷰 + 대안 방법론 + 후속 연구 통합
+ * v5 탭3에서 [리뷰 & 대안 생성] 버튼 클릭 시 호출
+ * @param {string} apiKey
+ * @param {Object} paperContext — Agent 1의 paper_context
+ * @param {Object} methodResult — Agent 2의 분석 결과 (standard_name, steps 등)
+ * @param {Object} methodMeta — Agent 1의 detected_method 원본
+ * @returns {Promise<{ peer: string, alternatives: string, future: string }>}
+ */
+export async function runReviewGuide(apiKey, paperContext, methodResult, methodMeta) {
+  const category = paperContext.analysis_category || '';
+  const analysisType = methodMeta?.analysis_type || methodResult.analysis_type || '';
+  const keyVars = methodMeta?.key_variables || {};
+  const targetLocation = methodMeta?.target_result_location || '';
+
+  const prompt = `당신은 학술 논문 심사위원이자 방법론 전문가입니다.
+아래 논문의 분석 방법에 대해 3파트로 나누어 심층 리뷰를 작성하세요.
+
+[방법론]: ${methodResult.standard_name || '미지정'}
+[분석 유형]: ${analysisType || '미지정'}
+[논문 분야]: ${paperContext.domain || '사회과학'}
+[데이터 특성]: ${paperContext.data_characteristics || '일반 데이터'}
+[분석 카테고리]: ${category}
+[목표 결과]: ${targetLocation}
+${keyVars.outcome ? `[종속변수]: ${keyVars.outcome}` : ''}
+${keyVars.treatment ? `[핵심 독립변수]: ${keyVars.treatment}` : ''}
+${keyVars.controls ? `[통제변수]: ${keyVars.controls}` : ''}
+
+반드시 아래 구분자 형식으로 출력하세요. 각 섹션을 빠짐없이 포함하세요.
+
+===PEER_REVIEW===
+## 동료 리뷰 (Peer Review)
+
+### 1. 방법론 핵심 가정과 위반 가능성
+- 이 방법론("${methodResult.standard_name}")의 핵심 가정 3가지를 나열하세요.
+- 각 가정이 이 논문의 데이터/맥락에서 위반될 가능성과 그 영향을 평가하세요.
+
+### 2. 내적 타당성 및 강건성 우려
+- 내생성(endogeneity), 선택편향(selection bias) 등 인과추론 위협 요소를 평가하세요.
+- 결과의 민감도(robustness)에 대한 우려 사항을 기술하세요.
+
+### 3. 빠진 강건성 검정 제안
+- 논문에서 수행하지 않았지만 수행해야 할 강건성 검정 3~5가지를 구체적으로 제안하세요.
+- 각 검정의 목적, 방법, 기대 결과를 간략히 설명하세요.
+
+### 4. 심사위원 의견 종합
+- "만약 내가 이 논문의 심사위원이라면" 관점에서 주요 지적 사항 3가지를 요약하세요.
+- 각 지적에 대한 개선 방향도 함께 제시하세요.
+
+한국어로 작성하세요. 학술 용어는 영문을 병기(괄호)하세요.
+===END_PEER_REVIEW===
+
+===ALTERNATIVES===
+## 대안 방법론 제안
+
+아래 형식으로 대안 방법론 3~4가지를 제안하세요. 각 대안에 대해 반드시 모든 항목을 포함하세요.
+
+### 대안 1: [방법론 명칭]
+- **왜 대안인가**: 현재 방법론의 어떤 한계를 극복하는지
+- **핵심 원리**: 이 방법론의 핵심 아이디어 (2~3문장)
+- **장점**: 현재 방법론 대비 구체적 장점
+- **단점/한계**: 이 대안의 한계와 적용 조건
+- **적용 시 예상 결과**: 이 논문 데이터에 적용하면 구체적으로 어떤 변화가 예상되는지
+- **구현 정보**: Python 패키지/함수, R 패키지/함수
+- **대표 논문**: 저자(연도), 저널명
+
+(3~4개 반복)
+
+한국어로 작성하세요. 코드와 학술 용어는 영문을 유지하세요.
+===END_ALTERNATIVES===
+
+===FUTURE_RESEARCH===
+## 후속 연구 아이디어
+
+이 논문을 기반으로 확장할 수 있는 후속 연구 방향 3~5가지를 제안하세요.
+
+### 아이디어 1: [제목]
+- **확장 방향**: 데이터/변수/방법을 어떻게 확장하는지
+- **연구 질문**: 새로운 연구 질문
+- **필요 데이터**: 추가 데이터와 출처
+- **분석 방법**: 적합한 분석 방법론
+- **예상 결과**: 기대되는 결과 방향
+- **실현 가능성**: 상/중/하 + 이유
+
+(3~5개 반복)
+
+한국어로 작성하세요. 학술 용어는 영문을 병기(괄호)하세요.
+===END_FUTURE_RESEARCH===`;
+
+  const raw = await callGemini(apiKey, prompt, API.tokens.review || 8000);
+
+  // 3파트 파싱
+  const peerMatch = raw.match(/===PEER_REVIEW===([\s\S]*?)===END_PEER_REVIEW===/);
+  const altMatch = raw.match(/===ALTERNATIVES===([\s\S]*?)===END_ALTERNATIVES===/);
+  const futureMatch = raw.match(/===FUTURE_RESEARCH===([\s\S]*?)===END_FUTURE_RESEARCH===/);
+
+  return {
+    peer: peerMatch ? peerMatch[1].trim() : raw.trim(),
+    alternatives: altMatch ? altMatch[1].trim() : '',
+    future: futureMatch ? futureMatch[1].trim() : '',
+  };
 }

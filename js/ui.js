@@ -1,903 +1,911 @@
-/**
- * ui.js — UI 렌더링 및 상호작용
- * ResearchMethodAgent v4.0
- */
+/* ============================================================================
+   ResearchMethodAgent v5.0 - UI Module
+   ============================================================================
+   역할: HTML 요소 관리, 사용자 상호작용 처리, 분석 결과 렌더링
+   - 4개 탭 전환 (논문개요, 실습, 리뷰, Q&A)
+   - 로딩 상태 업데이트
+   - PDF 업로드 및 분석 파이프라인 UI
+   ============================================================================ */
 
-import { escapeHtml, copyToClipboard } from './utils.js';
 import { generateMockData, computeStats, downloadCSV } from './mockdata.js';
-import { runQnA, runInterpretationGuide } from './agents.js';
+import {
+  loadAnalysisSteps,
+  executeStep,
+  loadReview,
+  sendQnA,
+  getState,
+  getMethods,
+  getDataStructure,
+  getPaperContext,
+  getPaperText
+} from './pipeline.js';
+import { escapeHtml, copyToClipboard } from './utils.js';
 
-/* ============================================================
-   DOM 요소 캐싱
-   ============================================================ */
+/* ============================================================================
+   DOM 헬퍼 & 상태 관리
+   ============================================================================ */
 
 const $ = (id) => document.getElementById(id);
+let currentMethodIndex = 0;
+let currentLanguage = 'python';
+let mockDataCache = null;
 
-export const dom = {
-  get apiKey()        { return $('api-key'); },
-  get txtInput()      { return $('txt-input'); },
-  get configCard()    { return $('config-card'); },
-  get inputCard()     { return $('input-card'); },
-  get loadingCard()   { return $('loading-card'); },
-  get loadingMsg()    { return $('loading-msg'); },
-  get loadingTip()    { return $('loading-tip'); },
-  get progressBar()   { return $('progress-bar'); },
-  get statusMsg()     { return $('status-msg'); },
-  get runBtn()        { return $('run-btn'); },
-  get resultWrap()    { return $('result-wrap'); },
-  get paperTitle()    { return $('r-title'); },
-  get paperMeta()     { return $('r-meta'); },
-  get contextTags()   { return $('r-context'); },
-  get methodNav()     { return $('method-nav'); },
-  get methodBlocks()  { return $('method-blocks'); },
-  // Tab
-  get tabText()       { return $('tab-text'); },
-  get tabPdf()        { return $('tab-pdf'); },
-  get panelText()     { return $('panel-text'); },
-  get panelPdf()      { return $('panel-pdf'); },
-  // PDF
-  get dropZone()      { return $('drop-zone'); },
-  get pdfFile()       { return $('pdf-file'); },
-  get pdfName()       { return $('pdf-name'); },
-  get pdfStatus()     { return $('pdf-extract-status'); },
-};
-
-/* ============================================================
-   탭 전환
-   ============================================================ */
-
-let currentTab = 'text';
-export function getCurrentTab() { return currentTab; }
-
-export function switchTab(tab) {
-  currentTab = tab;
-  dom.tabText.classList.toggle('active', tab === 'text');
-  dom.tabPdf.classList.toggle('active',  tab === 'pdf');
-  dom.panelText.style.display = tab === 'text' ? 'block' : 'none';
-  dom.panelPdf.style.display  = tab === 'pdf'  ? 'block' : 'none';
-}
-
-/* ============================================================
-   상태 메시지
-   ============================================================ */
-
-export function showStatus(message) {
-  dom.statusMsg.innerHTML = message;
-  dom.statusMsg.classList.add('visible');
-}
-
-export function hideStatus() {
-  dom.statusMsg.classList.remove('visible');
-}
-
-export function setLoading(message) {
-  dom.loadingMsg.innerHTML = message;
-}
-
-/* ============================================================
-   로딩 애니메이션 — 에이전트 스텝 + 프로그레스 + 팁
-   ============================================================ */
-
-const TIPS = [
-  { label: '💡 Tip', text: 'OLS 추정은 편의(bias)가 존재할 수 있어 도구변수(IV) 추정법으로 보완합니다.' },
-  { label: '📚 알아두기', text: '도구변수는 적합성(relevance)과 외생성(exogeneity) 두 조건을 만족해야 합니다.' },
-  { label: '🔬 방법론', text: '2SLS(Two-Stage Least Squares)는 내생성 문제를 해결하는 대표적인 추정 방법입니다.' },
-  { label: '💡 Tip', text: '가상 데이터는 원본의 기술통계(평균, 표준편차)를 모방하여 유사한 분석 결과를 재현합니다.' },
-  { label: '📊 통계', text: 'F-통계량이 10 이상이면 약한 도구변수(weak IV) 문제가 없다고 판단합니다.' },
-  { label: '🧪 실습', text: '생성된 가상 데이터로 Python/R 코드를 직접 실행해보면 분석 방법을 체득할 수 있습니다.' },
-  { label: '💡 Tip', text: '이분산-일치(HC) 표준오차를 사용하면 이분산성에 강건한 추론이 가능합니다.' },
-  { label: '📚 알아두기', text: '내생성(endogeneity)은 설명변수와 오차항이 상관될 때 발생하는 추정 문제입니다.' },
-];
-
-let tipInterval = null;
-
-/**
- * 에이전트 스텝 활성화 (0=전처리, 1~4=에이전트)
- * @param {number} step — 현재 활성 단계 (0: PDF→MD, 1~4: 에이전트)
- */
-export function setAgentStep(step) {
-  // step 0 = 전처리(PDF→MD), step 1~4 = 에이전트
-  for (let i = 0; i <= 4; i++) {
-    const el = $(`step-agent${i}`);
-    if (!el) continue;
-    el.classList.remove('active', 'done');
-    if (i < step) el.classList.add('done');
-    else if (i === step) el.classList.add('active');
-  }
-}
-
-/**
- * 프로그레스 바 업데이트
- * @param {number} percent — 0~100
- */
-export function setProgress(percent) {
-  if (dom.progressBar) {
-    dom.progressBar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
-  }
-}
-
-/**
- * 로딩 팁 순환 시작
- */
-export function startTipRotation() {
-  showRandomTip();
-  tipInterval = setInterval(showRandomTip, 6000);
-}
-
-/**
- * 로딩 팁 순환 중지
- */
-export function stopTipRotation() {
-  if (tipInterval) {
-    clearInterval(tipInterval);
-    tipInterval = null;
-  }
-  if (dom.loadingTip) dom.loadingTip.style.display = 'none';
-}
-
-function showRandomTip() {
-  const tip = TIPS[Math.floor(Math.random() * TIPS.length)];
-  if (dom.loadingTip) {
-    dom.loadingTip.style.display = 'block';
-    dom.loadingTip.innerHTML = `<span class="loading-tip-label">${tip.label}</span> ${tip.text}`;
-    // 리-애니메이션
-    dom.loadingTip.style.animation = 'none';
-    dom.loadingTip.offsetHeight; // reflow
-    dom.loadingTip.style.animation = 'fadeInUp 0.5s ease';
-  }
-}
-
-/* ============================================================
-   화면 전환 (입력 → 로딩 → 결과)
-   ============================================================ */
+/* ============================================================================
+   뷰 전환 함수 (UI 표시/숨김)
+   ============================================================================ */
 
 export function showLoadingView() {
-  hideStatus();
-  dom.runBtn.disabled = true;
-  dom.configCard.style.display = 'none';
-  dom.inputCard.style.display = 'none';
-  dom.loadingCard.style.display = 'block';
-  // 초기화
-  setAgentStep(0);
-  setProgress(0);
-  startTipRotation();
+  // 설정 카드 숨김
+  const configCard = $('config-card');
+  if (configCard) configCard.style.display = 'none';
+
+  // 입력 카드 숨김
+  const inputCard = $('input-card');
+  if (inputCard) inputCard.style.display = 'none';
+
+  // 로딩 카드 표시
+  const loadingCard = $('loading-card');
+  if (loadingCard) loadingCard.style.display = 'block';
+
+  // 결과 영역 숨김
+  const resultWrap = $('result-wrap');
+  if (resultWrap) resultWrap.style.display = 'none';
 }
 
 export function showInputView() {
-  dom.loadingCard.style.display = 'none';
-  dom.configCard.style.display = 'block';
-  dom.inputCard.style.display = 'block';
-  dom.runBtn.disabled = false;
-  stopTipRotation();
+  // 설정 카드 표시
+  const configCard = $('config-card');
+  if (configCard) configCard.style.display = 'block';
+
+  // 입력 카드 표시
+  const inputCard = $('input-card');
+  if (inputCard) inputCard.style.display = 'block';
+
+  // 로딩 카드 숨김
+  const loadingCard = $('loading-card');
+  if (loadingCard) loadingCard.style.display = 'none';
+
+  // 결과 영역 숨김
+  const resultWrap = $('result-wrap');
+  if (resultWrap) resultWrap.style.display = 'none';
 }
 
 export function showResultView() {
-  dom.loadingCard.style.display = 'none';
-  dom.resultWrap.classList.add('visible');
-  stopTipRotation();
+  // 설정 카드 숨김
+  const configCard = $('config-card');
+  if (configCard) configCard.style.display = 'none';
+
+  // 입력 카드 숨김
+  const inputCard = $('input-card');
+  if (inputCard) inputCard.style.display = 'none';
+
+  // 로딩 카드 숨김
+  const loadingCard = $('loading-card');
+  if (loadingCard) loadingCard.style.display = 'none';
+
+  // 결과 영역 표시
+  const resultWrap = $('result-wrap');
+  if (resultWrap) resultWrap.style.display = 'block';
 }
 
-/* ============================================================
-   PDF 상태 표시
-   ============================================================ */
+/* ============================================================================
+   로딩 상태 업데이트
+   ============================================================================ */
+
+export function updateLoadingStep(stepIndex, status) {
+  // status: 'running' | 'done'
+  const steps = document.querySelectorAll('.loading-step');
+  if (steps.length > stepIndex) {
+    const step = steps[stepIndex];
+    const icon = step.querySelector('.loading-step-icon');
+    if (status === 'running') {
+      step.classList.add('active');
+      if (icon) icon.textContent = '⏳';
+    } else if (status === 'done') {
+      step.classList.remove('active');
+      if (icon) icon.textContent = '✅';
+    }
+  }
+}
+
+export function setLoadingMessage(message) {
+  const msgEl = $('loading-message');
+  if (msgEl) msgEl.textContent = message;
+}
+
+export function showStatus(message) {
+  // 간단한 상태 메시지 표시 (alert 또는 알림 div)
+  alert(message);
+}
+
+/* ============================================================================
+   PDF 업로드 관련 UI
+   ============================================================================ */
 
 export function showPdfFileName(name) {
-  dom.pdfName.style.display = 'block';
-  dom.pdfName.textContent = `선택됨: ${name}`;
+  const fileNameEl = $('file-name');
+  if (fileNameEl) fileNameEl.textContent = name;
 }
 
 export function showPdfProgress(message) {
-  dom.pdfStatus.style.display = 'block';
-  dom.pdfStatus.style.color = '';
-  dom.pdfStatus.textContent = message;
+  const fileNameEl = $('file-name');
+  if (fileNameEl) fileNameEl.textContent = message;
 }
 
 export function showPdfSuccess(pages, charCount) {
-  dom.pdfStatus.style.color = 'var(--color-success)';
-  dom.pdfStatus.textContent = `✅ 추출 완료 — ${pages}페이지 / 약 ${charCount}자`;
+  const fileNameEl = $('file-name');
+  if (fileNameEl) {
+    fileNameEl.textContent = `✅ 추출 완료: ${pages}페이지, ${charCount}자`;
+  }
 }
 
 export function showPdfError(message) {
-  dom.pdfStatus.style.color = 'var(--color-danger)';
-  dom.pdfStatus.textContent = `❌ ${message}`;
-}
-
-/* ============================================================
-   분석 결과 렌더링
-   ============================================================ */
-
-/** 분석 결과 전체 저장 (Q&A용) */
-let _analysisData = null;
-
-/** 원본 텍스트 저장 (Q&A용) */
-let _paperText = null;
-
-export function setPaperText(text) {
-  _paperText = text;
-}
-
-/** 변환된 마크다운 저장 (PDF→MD) */
-let _convertedMarkdown = null;
-
-export function setConvertedMarkdown(md) {
-  _convertedMarkdown = md;
-}
-
-export function getConvertedMarkdown() {
-  return _convertedMarkdown;
-}
-
-/** 저장된 기술통계 (가상 데이터 생성용) */
-let _descriptiveStats = null;
-
-export function setDescriptiveStats(stats) {
-  _descriptiveStats = stats;
-}
-
-/**
- * 분석 결과 전체 렌더링 — 탭 패널 방식
- * @param {Object} data — 최종 분석 결과 객체
- */
-export function renderResult(data) {
-  const meta = data.metadata || {};
-  const ctx = data.paper_context || {};
-  const methods = data.methods || [];
-
-  // 논문 정보
-  dom.paperTitle.textContent = meta.title || '제목 미상';
-  dom.paperMeta.textContent = meta.summary || '';
-
-  // 컨텍스트 태그
-  let ctxHtml = '';
-  if (ctx.domain)               ctxHtml += `<div class="context-tag">분야: ${escapeHtml(ctx.domain)}</div>`;
-  if (ctx.research_type)        ctxHtml += `<div class="context-tag">유형: ${escapeHtml(ctx.research_type)}</div>`;
-  if (ctx.data_characteristics) ctxHtml += `<div class="context-tag">데이터: ${escapeHtml(ctx.data_characteristics)}</div>`;
-  if (ctx.analysis_category)    ctxHtml += `<div class="context-tag">분석: ${escapeHtml(ctx.analysis_category)}</div>`;
-  if (ctx.category_evidence)    ctxHtml += `<div class="context-tag context-tag-evidence" title="${escapeHtml(ctx.category_evidence)}">📌 ${escapeHtml(ctx.category_evidence)}</div>`;
-  if (_convertedMarkdown) {
-    ctxHtml += `<button class="context-tag btn-md-download" id="btn-md-download" style="cursor:pointer;background:var(--color-primary);color:#fff;border:none">📄 구조화 MD 다운로드</button>`;
+  const fileNameEl = $('file-name');
+  if (fileNameEl) {
+    fileNameEl.textContent = `❌ 오류: ${message}`;
+    fileNameEl.style.color = '#e74c3c';
   }
-  dom.contextTags.innerHTML = ctxHtml;
-
-  // MD 다운로드 버튼 바인딩
-  const mdBtn = $('btn-md-download');
-  if (mdBtn && _convertedMarkdown) {
-    mdBtn.addEventListener('click', () => {
-      const bom = '\uFEFF';
-      const blob = new Blob([bom + _convertedMarkdown], { type: 'text/markdown;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${(meta.title || 'paper').replace(/[^a-zA-Z0-9가-힣]/g, '_')}_structured.md`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    });
-  }
-
-  // ── 패널 1: 개요 (섹션 색인) ──
-  const sectionIndex = data.section_index || [];
-  const indexEl = $('section-index');
-  if (indexEl && sectionIndex.length > 0) {
-    let indexHtml = '';
-    for (const sec of sectionIndex) {
-      const tables = (sec.key_tables || []).map(t => `<span class="pkg">${escapeHtml(t)}</span>`).join(' ');
-      indexHtml += `
-        <div class="index-item">
-          <div class="index-section">${escapeHtml(sec.section)}</div>
-          <div class="index-summary">${escapeHtml(sec.summary)}</div>
-          ${tables ? `<div class="index-tables">${tables}</div>` : ''}
-        </div>`;
-    }
-    indexEl.innerHTML = indexHtml;
-  }
-
-  // 방법론 없을 때
-  dom.methodNav.innerHTML = '';
-  const analysisBlocks = $('analysis-blocks');
-  const codeBlocks = $('code-blocks');
-  const dataBlocks = $('data-blocks');
-  const interpretBlocks = $('interpret-blocks');
-
-  if (analysisBlocks) analysisBlocks.innerHTML = '';
-  if (codeBlocks) codeBlocks.innerHTML = '';
-  if (dataBlocks) dataBlocks.innerHTML = '';
-  if (interpretBlocks) interpretBlocks.innerHTML = '';
-
-  if (methods.length === 0) {
-    if (analysisBlocks) {
-      analysisBlocks.innerHTML = `
-        <div class="desc-box text-danger">
-          방법론을 감지하지 못했습니다. 논문의 분석 방법 섹션이 포함된 텍스트를 붙여넣으세요.
-          ${data._debug ? '<br><br>' + escapeHtml(data._debug) : ''}
-        </div>`;
-    }
-    bindResultTabs();
-    bindQnA();
-    return;
-  }
-
-  // 전체 분석 컨텍스트 저장 (Q&A용)
-  _analysisData = data;
-
-  // 방법론 선택 탭 (분석/코드/데이터/해석에서 공유)
-  methods.forEach((m, i) => {
-    const btn = document.createElement('button');
-    btn.className = `method-nav-btn${i === 0 ? ' active' : ''}`;
-    btn.textContent = m.standard_name || m.raw_name;
-    btn.dataset.idx = i;
-    btn.addEventListener('click', () => switchMethod(i));
-    dom.methodNav.appendChild(btn);
-  });
-
-  // ── 패널별 콘텐츠 렌더링 ──
-  methods.forEach((m, i) => {
-    const isFirst = i === 0;
-    const activeClass = isFirst ? ' active' : '';
-
-    // 패널 2: 분석 (Agent 1 근거 + Agent 2 해석)
-    if (analysisBlocks) {
-      const div = document.createElement('div');
-      div.className = `method-block${activeClass}`;
-      div.id = `analysis-mblock-${i}`;
-      div.innerHTML = buildAnalysisHtml(m, i, ctx);
-      analysisBlocks.appendChild(div);
-    }
-
-    // 패널 3: 코드 (Agent 3)
-    if (codeBlocks) {
-      const div = document.createElement('div');
-      div.className = `method-block${activeClass}`;
-      div.id = `code-mblock-${i}`;
-      div.innerHTML = buildCodeHtml(m, i, ctx);
-      codeBlocks.appendChild(div);
-    }
-
-    // 패널 4: 데이터 (Agent 4)
-    if (dataBlocks) {
-      const div = document.createElement('div');
-      div.className = `method-block${activeClass}`;
-      div.id = `data-mblock-${i}`;
-      div.innerHTML = buildDataHtml(m, i);
-      dataBlocks.appendChild(div);
-    }
-
-    // 패널 5: 해석 가이드 (Agent 6)
-    if (interpretBlocks) {
-      const div = document.createElement('div');
-      div.className = `method-block${activeClass}`;
-      div.id = `interpret-mblock-${i}`;
-      div.innerHTML = buildInterpretHtml(m, i);
-      interpretBlocks.appendChild(div);
-    }
-  });
-
-  bindResultTabs();
-  bindCopyButtons();
-  bindLangTabs();
-  bindMockDataButtons();
-  bindInterpretationButtons();
-  bindQnA();
 }
 
-/**
- * 분석 패널 HTML — Agent 1 근거 + Agent 2 해석/절차
- */
-function buildAnalysisHtml(m, index, ctx) {
-  const stepsHtml = (m.steps || []).map((s, si) => `
-    <div class="step-item">
-      <div class="step-num">${s.step || si + 1}</div>
-      <div class="step-text"><b>${escapeHtml(s.name)}</b> — ${escapeHtml(s.desc)}</div>
-    </div>
-  `).join('');
+/* ============================================================================
+   초기 결과 렌더링 (Tab 1: 논문 개요 & 데이터 구조)
+   ============================================================================ */
 
-  return `
-    <div class="method-header">
-      <div class="method-badge">Agent 2 표준화</div>
-      <div class="method-name">
-        ${escapeHtml(m.standard_name)}
-        <span class="raw">(원문: ${escapeHtml(m.raw_name)})</span>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">추출 근거 및 목표 (Agent 1)</div>
-      <div class="evidence-box">"${escapeHtml(m.evidence)}"</div>
-      <div class="target-box">🎯 <b>목표 재현 위치:</b> ${escapeHtml(m.target_location)}
-        ${m.source_section ? `&nbsp;&nbsp;📑 <b>출처 섹션:</b> ${escapeHtml(m.source_section)}` : ''}</div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">학술적 해석 및 절차 (Agent 2)</div>
-      <div class="insight-box mb-8"><b>도메인 맞춤 해석:</b><br>${escapeHtml(m.why_used)}</div>
-      <div class="desc-box mb-8">${escapeHtml(m.concept)}</div>
-      <div class="step-list">${stepsHtml}</div>
-    </div>
-  `;
-}
-
-/**
- * 코드 패널 HTML — Agent 3 코드 + 패키지
- */
-function buildCodeHtml(m, index, ctx) {
-  const pkgPy = (m.packages?.python || []).map(p => `<span class="pkg">${escapeHtml(p)}</span>`).join('');
-  const pkgR  = (m.packages?.r || []).map(p => `<span class="pkg">${escapeHtml(p)}</span>`).join('');
-
-  return `
-    <div class="method-header">
-      <div class="method-badge">Agent 3</div>
-      <div class="method-name">${escapeHtml(m.standard_name)} — 재현 코드</div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">맞춤형 재현 코드</div>
-      <div class="text-sm text-muted mb-8">
-        ※ ${escapeHtml(ctx.data_characteristics || '논문')} 특성을 반영한 Mock 데이터를 자동 생성합니다.
-      </div>
-      <div class="mb-8">
-        <div class="text-xs text-muted">Python: <span class="pkg-row" style="display:inline-flex">${pkgPy}</span></div>
-        <div class="text-xs text-muted" style="margin-top:4px">R: <span class="pkg-row" style="display:inline-flex">${pkgR}</span></div>
-      </div>
-      <div class="code-lang-bar">
-        <button class="code-lang-tab active" data-lang="py" data-idx="${index}">Python</button>
-        <button class="code-lang-tab" data-lang="r" data-idx="${index}">R</button>
-      </div>
-      <div class="code-wrap">
-        <div class="code-block active" id="code-py-${index}">
-          <button class="copy-btn" data-target="code-py-${index}">복사</button>
-          <pre>${escapeHtml(m.python_code)}</pre>
-        </div>
-        <div class="code-block" id="code-r-${index}">
-          <button class="copy-btn" data-target="code-r-${index}">복사</button>
-          <pre>${escapeHtml(m.r_code)}</pre>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-/**
- * 데이터 패널 HTML — Agent 4 가상 데이터
- */
-function buildDataHtml(m, index) {
-  return `
-    <div class="method-header">
-      <div class="method-badge">Agent 4</div>
-      <div class="method-name">${escapeHtml(m.standard_name)} — 실습 데이터</div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">🧪 실습용 가상 데이터</div>
-      <div class="text-xs text-muted mb-8">
-        논문의 기술통계를 역산하여 유사한 특성의 가상 데이터를 생성합니다. 코드 탭의 코드에 바로 활용할 수 있습니다.
-      </div>
-      <div>
-        <button class="btn-mockdata" data-idx="${index}" id="mockdata-btn-${index}">
-          🧪 가상 데이터 생성
-        </button>
-        <button class="btn-download" data-idx="${index}" id="download-btn-${index}" style="display:none">
-          📥 CSV 다운로드
-        </button>
-      </div>
-      <div id="mockdata-result-${index}" style="margin-top:10px"></div>
-    </div>
-  `;
-}
-
-/**
- * 해석 패널 HTML — Agent 6: 3파트 (해석 + 리뷰 + 후속연구)
- */
-function buildInterpretHtml(m, index) {
-  return `
-    <div class="method-header">
-      <div class="method-badge">Agent 6 · Peer Reviewer</div>
-      <div class="method-name">${escapeHtml(m.standard_name)} — 해석 · 리뷰 · 후속 연구</div>
-    </div>
-
-    <div class="section">
-      <div class="text-xs text-muted mb-8">
-        결과 해석 가이드(Part I) + 동료 평가자 비판적 검토(Part II) + 후속 연구 아이디어(Part III)를 한번에 생성합니다.
-      </div>
-      <button class="btn-interpret" data-idx="${index}" id="interpret-btn-${index}">
-        📖 3파트 해석 가이드 생성
-      </button>
-      <div id="interpret-result-${index}" style="margin-top:10px">
-        <!-- 서브탭에 의해 Part I/II/III가 토글됨 -->
-        <div class="interpret-part active" data-part="guide" id="interpret-guide-${index}"></div>
-        <div class="interpret-part" data-part="review" id="interpret-review-${index}"></div>
-        <div class="interpret-part" data-part="future" id="interpret-future-${index}"></div>
-      </div>
-    </div>
-  `;
-}
-
-/* ============================================================
-   가상 데이터 생성 버튼 바인딩
-   ============================================================ */
-
-function bindMockDataButtons() {
-  document.querySelectorAll('.btn-mockdata').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = btn.dataset.idx;
-      handleMockDataGeneration(idx);
-    });
-  });
-}
-
-async function handleMockDataGeneration(idx) {
-  const btn = $(`mockdata-btn-${idx}`);
-  const dlBtn = $(`download-btn-${idx}`);
-  const resultEl = $(`mockdata-result-${idx}`);
-
-  if (!_descriptiveStats || !_descriptiveStats.variables?.length) {
-    resultEl.innerHTML = '<div class="desc-box text-danger">기술통계를 추출하지 못했습니다. 논문에 기술통계표가 포함되어 있는지 확인하세요.</div>';
-    return;
-  }
-
-  btn.disabled = true;
-  btn.textContent = '⏳ 생성 중...';
-
+export function renderInitialResult(docResult, dataStructure) {
   try {
-    // 가상 데이터 생성
-    const { csv, data, variables } = generateMockData(_descriptiveStats);
-    const comparison = computeStats(data, variables);
+    const meta = docResult.metadata || {};
+    const ctx = docResult.paper_context || {};
 
-    // CSV 저장 (다운로드 버튼용)
-    btn._csv = csv;
-    btn._filename = `mock_data_${_descriptiveStats.sample_size || 500}obs.csv`;
+    // 논문 정보 렌더링
+    const titleEl = $('r-title');
+    const metaEl = $('r-meta');
+    const contextEl = $('r-context');
 
-    // 비교표 렌더링
-    let tableHtml = `
-      <table class="stats-table">
-        <thead>
-          <tr>
-            <th>변수</th>
-            <th>원본 평균</th>
-            <th>생성 평균</th>
-            <th>원본 SD</th>
-            <th>생성 SD</th>
-            <th>유사도</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
+    if (titleEl) titleEl.textContent = meta.title || '논문 제목';
+    if (metaEl) metaEl.textContent = meta.summary || '';
 
-    for (const row of comparison) {
-      const meanDiff = row.original_mean
-        ? Math.abs(row.generated_mean - row.original_mean) / Math.max(Math.abs(row.original_mean), 0.01)
-        : 0;
-      const matchClass = meanDiff < 0.1 ? 'match-good' : 'match-ok';
-      const matchText = meanDiff < 0.1 ? '✓ 우수' : '△ 보통';
-
-      tableHtml += `
-        <tr>
-          <td class="var-name">${escapeHtml(row.name_kr)}</td>
-          <td>${row.original_mean ?? '-'}</td>
-          <td>${row.generated_mean}</td>
-          <td>${row.original_sd ?? '-'}</td>
-          <td>${row.generated_sd}</td>
-          <td class="${matchClass}">${matchText}</td>
-        </tr>
-      `;
+    // 컨텍스트 태그
+    if (contextEl) {
+      let ctxHtml = '';
+      if (ctx.domain)               ctxHtml += `<span class="context-tag">📚 ${escapeHtml(ctx.domain)}</span>`;
+      if (ctx.research_type)        ctxHtml += `<span class="context-tag">🔬 ${escapeHtml(ctx.research_type)}</span>`;
+      if (ctx.data_characteristics) ctxHtml += `<span class="context-tag">📊 ${escapeHtml(ctx.data_characteristics)}</span>`;
+      if (ctx.analysis_category)    ctxHtml += `<span class="context-tag">🏷️ ${escapeHtml(ctx.analysis_category)}</span>`;
+      if (ctx.category_evidence)    ctxHtml += `<span class="context-tag context-tag-evidence" title="${escapeHtml(ctx.category_evidence)}">📌 ${escapeHtml(ctx.category_evidence)}</span>`;
+      contextEl.innerHTML = ctxHtml;
     }
 
-    tableHtml += '</tbody></table>';
+    // 섹션 인덱스 렌더링
+    renderSectionIndex(docResult.section_index || []);
 
-    resultEl.innerHTML = `
-      <div class="desc-box mb-8">
-        ✅ <b>${data.length}개</b> 관측치 × <b>${variables.length}개</b> 변수의 가상 데이터가 생성되었습니다.
-      </div>
-      <div class="text-xs text-muted mb-6"><b>원본 vs 생성 데이터 기술통계 비교</b></div>
-      <div class="stats-comparison">${tableHtml}</div>
-    `;
+    // 데이터 구조 카드 렌더링
+    renderDataStructureCard(dataStructure);
 
-    // 다운로드 버튼 표시
-    dlBtn.style.display = 'inline-flex';
-    dlBtn.onclick = () => downloadCSV(btn._csv, btn._filename);
+    // 메소드 네비게이션 렌더링
+    renderMethodNav();
 
-    btn.textContent = '🔄 재생성';
-    btn.disabled = false;
-  } catch (err) {
-    resultEl.innerHTML = `<div class="desc-box text-danger">생성 실패: ${escapeHtml(err.message)}</div>`;
-    btn.textContent = '🧪 가상 데이터 생성';
-    btn.disabled = false;
+    // 메소드 선택 핸들러 설정
+    setupMethodNavHandlers();
+
+    // 탭 전환 핸들러 설정
+    setupTabHandlers();
+
+    // 언어 선택 핸들러 설정
+    setupLanguageToggleHandlers();
+
+    // Q&A 입력 핸들러 설정
+    setupQnAHandlers();
+
+    // 홈 링크 핸들러
+    setupHomeLink();
+
+    // Mock 데이터 생성 핸들러
+    setupMockDataGeneration();
+
+    // 리뷰 핸들러
+    setupReviewHandlers();
+
+    showResultView();
+  } catch (error) {
+    console.error('초기 결과 렌더링 중 오류:', error);
+    showStatus('결과 렌더링 중 오류가 발생했습니다.');
   }
 }
 
-/* ============================================================
-   인터랙션: 방법론 전환, 언어 탭, 복사
-   ============================================================ */
+/* ============================================================================
+   섹션 인덱스 렌더링
+   ============================================================================ */
 
-/**
- * 결과 탭 패널 전환 바인딩
- */
-function bindResultTabs() {
-  const tabBar = $('result-tab-bar');
-  if (!tabBar) return;
+function renderSectionIndex(sections) {
+  const indexWrap = $('section-index');
+  if (!indexWrap) return;
 
-  tabBar.querySelectorAll('.result-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      const panelId = tab.dataset.panel;
-
-      // 탭 활성화
-      tabBar.querySelectorAll('.result-tab').forEach(t => t.classList.toggle('active', t === tab));
-
-      // 패널 전환
-      document.querySelectorAll('.result-panel').forEach(p => {
-        p.classList.toggle('active', p.id === `panel-${panelId}`);
-      });
-
-      // 개요/Q&A 탭에서는 방법론 선택 숨김
-      const methodNav = dom.methodNav;
-      if (methodNav) {
-        methodNav.style.display = (panelId === 'overview' || panelId === 'qna') ? 'none' : 'flex';
-      }
-    });
-  });
-
-  // 초기 상태: 개요 탭에서는 방법론 선택 숨김
-  if (dom.methodNav) dom.methodNav.style.display = 'none';
-}
-
-/**
- * 방법론 전환 — 모든 패널의 method-block을 동시에 전환
- */
-function switchMethod(idx) {
-  document.querySelectorAll('.method-nav-btn').forEach(btn => {
-    btn.classList.toggle('active', parseInt(btn.dataset.idx) === idx);
-  });
-  // 모든 패널의 method-block 전환
-  document.querySelectorAll('.method-block').forEach(block => {
-    const blockIdx = block.id.split('-').pop();
-    block.classList.toggle('active', parseInt(blockIdx) === idx);
-  });
-}
-
-function bindLangTabs() {
-  document.querySelectorAll('.code-lang-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      const { lang, idx } = tab.dataset;
-      tab.parentElement.querySelectorAll('.code-lang-tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.lang === lang);
-      });
-      const wrap = tab.closest('.section').querySelector('.code-wrap');
-      wrap.querySelectorAll('.code-block').forEach(block => {
-        block.classList.toggle('active', block.id === `code-${lang}-${idx}`);
-      });
-    });
-  });
-}
-
-function bindCopyButtons() {
-  document.querySelectorAll('.copy-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const target = btn.dataset.target;
-      const pre = document.getElementById(target)?.querySelector('pre');
-      if (!pre) return;
-
-      const success = await copyToClipboard(pre.textContent);
-      if (success) {
-        btn.textContent = '복사됨!';
-        setTimeout(() => { btn.textContent = '복사'; }, 1500);
-      }
-    });
-  });
-}
-
-/* ============================================================
-   해석 가이드 버튼 바인딩
-   ============================================================ */
-
-function bindInterpretationButtons() {
-  document.querySelectorAll('.btn-interpret').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const idx = parseInt(btn.dataset.idx);
-      const guideEl = $(`interpret-guide-${idx}`);
-      const reviewEl = $(`interpret-review-${idx}`);
-      const futureEl = $(`interpret-future-${idx}`);
-      const apiKey = dom.apiKey.value.trim();
-
-      if (!apiKey) {
-        if (guideEl) guideEl.innerHTML = '<div class="desc-box text-danger">API 키를 입력해주세요.</div>';
-        return;
-      }
-      if (!_analysisData?.methods?.[idx]) return;
-
-      btn.disabled = true;
-      btn.textContent = '⏳ 3파트 생성 중...';
-
-      try {
-        const method = _analysisData.methods[idx];
-        const ctx = _analysisData.paper_context || {};
-        const guide = await runInterpretationGuide(apiKey, method, ctx, method.target_location);
-
-        // 3파트로 분할: Part I, Part II, Part III
-        const fullHtml = simpleMarkdownToHtml(guide);
-        const parts = splitInterpretParts(fullHtml);
-
-        if (guideEl)  guideEl.innerHTML  = `<div class="interpret-guide">${parts.guide}</div>`;
-        if (reviewEl) reviewEl.innerHTML = `<div class="interpret-guide">${parts.review}</div>`;
-        if (futureEl) futureEl.innerHTML = `<div class="interpret-guide">${parts.future}</div>`;
-
-        btn.textContent = '🔄 재생성';
-        btn.disabled = false;
-      } catch (err) {
-        if (guideEl) guideEl.innerHTML = `<div class="desc-box text-danger">생성 실패: ${escapeHtml(err.message)}</div>`;
-        btn.textContent = '📖 3파트 해석 가이드 생성';
-        btn.disabled = false;
-      }
-    });
-  });
-
-  // 서브탭 바인딩
-  bindInterpretSubTabs();
-}
-
-/**
- * 해석 결과를 Part I/II/III로 분할
- */
-function splitInterpretParts(html) {
-  // Part II, Part III 구분자로 분할
-  const part2Marker = /Part\s*II[^<]*/i;
-  const part3Marker = /Part\s*III[^<]*/i;
-
-  let guide = html;
-  let review = '';
-  let future = '';
-
-  // Part II 위치 찾기 — h3 태그 내에서 검색
-  const part2Match = html.match(/<h3[^>]*>([^<]*Part\s*II[^<]*)<\/h3>/i);
-  const part3Match = html.match(/<h3[^>]*>([^<]*Part\s*III[^<]*)<\/h3>/i);
-
-  if (part2Match) {
-    const p2Idx = html.indexOf(part2Match[0]);
-    if (part3Match) {
-      const p3Idx = html.indexOf(part3Match[0]);
-      guide = html.substring(0, p2Idx);
-      review = html.substring(p2Idx, p3Idx);
-      future = html.substring(p3Idx);
-    } else {
-      guide = html.substring(0, p2Idx);
-      review = html.substring(p2Idx);
-    }
-  } else if (part3Match) {
-    const p3Idx = html.indexOf(part3Match[0]);
-    guide = html.substring(0, p3Idx);
-    future = html.substring(p3Idx);
+  if (!sections || sections.length === 0) {
+    indexWrap.innerHTML = '<p>섹션 정보를 찾을 수 없습니다.</p>';
+    return;
   }
 
-  // 구분자 대체 시도: "# Part"이 h3가 아닌 다른 형태로 렌더링될 경우
-  if (!review && !future) {
-    // "━━━" 구분선 또는 "Part II" 텍스트로 분할 시도
-    const lines = html.split('<br>');
-    let currentPart = 'guide';
-    const partContents = { guide: [], review: [], future: [] };
+  let html = '<div class="section-title">📑 논문 구조</div>';
+  sections.forEach(sec => {
+    const tables = (sec.key_tables || []).map(t => `<span class="pkg">${escapeHtml(t)}</span>`).join(' ');
+    html += `
+      <div class="index-item">
+        <div class="index-section">${escapeHtml(sec.section || '')}</div>
+        <div class="index-summary">${escapeHtml(sec.summary || '')}</div>
+        ${tables ? `<div class="index-tables">${tables}</div>` : ''}
+      </div>`;
+  });
 
-    for (const line of lines) {
-      if (line.match(/Part\s*II/i)) currentPart = 'review';
-      else if (line.match(/Part\s*III/i)) currentPart = 'future';
-      partContents[currentPart].push(line);
-    }
-
-    if (partContents.review.length > 0 || partContents.future.length > 0) {
-      guide = partContents.guide.join('<br>');
-      review = partContents.review.join('<br>');
-      future = partContents.future.join('<br>');
-    }
-  }
-
-  return {
-    guide: guide || '<div class="text-muted">해석 가이드 내용이 없습니다.</div>',
-    review: review || '<div class="text-muted">리뷰어 평가 내용이 없습니다.</div>',
-    future: future || '<div class="text-muted">후속 연구 아이디어가 없습니다.</div>',
-  };
+  indexWrap.innerHTML = html;
 }
 
-/**
- * 해석 서브탭 전환 바인딩
- */
-function bindInterpretSubTabs() {
-  const subTabBar = $('interpret-sub-tabs');
-  if (!subTabBar) return;
+/* ============================================================================
+   데이터 구조 카드 렌더링
+   ============================================================================ */
 
-  subTabBar.querySelectorAll('.interpret-sub-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      const sub = tab.dataset.sub;
+function renderDataStructureCard(dataStructure) {
+  if (!dataStructure) {
+    const descEl = $('data-structure-desc');
+    if (descEl) descEl.innerHTML = '<p class="text-muted">데이터 구조를 추출하지 못했습니다.</p>';
+    return;
+  }
 
-      // 서브탭 활성화
-      subTabBar.querySelectorAll('.interpret-sub-tab').forEach(t => t.classList.toggle('active', t === tab));
+  const descEl = $('data-structure-desc');
+  if (descEl) {
+    let descHtml = '';
+    if (dataStructure.data_description) {
+      descHtml += `<p>${escapeHtml(dataStructure.data_description)}</p>`;
+    }
+    if (dataStructure.structure_diagram) {
+      descHtml += `<div class="structure-diagram"><code>${escapeHtml(dataStructure.structure_diagram)}</code></div>`;
+    }
+    if (dataStructure.sample_info) {
+      const si = dataStructure.sample_info;
+      const infoParts = [];
+      if (si.n_obs)      infoParts.push(`관측치: ${si.n_obs}`);
+      if (si.n_entities) infoParts.push(`개체: ${si.n_entities}`);
+      if (si.n_periods)  infoParts.push(`기간: ${si.n_periods}`);
+      if (si.time_range) infoParts.push(`기간: ${si.time_range}`);
+      if (infoParts.length > 0) {
+        descHtml += `<div class="sample-info">${infoParts.map(p => `<span class="info-badge">${escapeHtml(p)}</span>`).join(' ')}</div>`;
+      }
+    }
+    if (dataStructure.limitations) {
+      descHtml += `<div class="data-limitations">⚠️ ${escapeHtml(dataStructure.limitations)}</div>`;
+    }
+    descEl.innerHTML = descHtml;
+  }
 
-      // 해당 파트 표시/숨김
-      document.querySelectorAll('.interpret-part').forEach(part => {
-        part.classList.toggle('active', part.dataset.part === sub);
-      });
+  // 변수 테이블 (Agent 4+ 형식: name_kr, name_en, role, type, mean, sd, min, max)
+  renderVariableTable(dataStructure.variables || []);
+}
+
+function renderVariableTable(variables) {
+  const wrapEl = $('variable-table-wrap');
+  if (!wrapEl) return;
+
+  if (!variables || variables.length === 0) {
+    wrapEl.innerHTML = '<p class="text-muted">변수 정보 없음</p>';
+    return;
+  }
+
+  let html = '<table class="variable-table"><thead><tr>';
+  html += '<th>변수명(한)</th><th>변수명(영)</th><th>역할</th><th>유형</th><th>평균</th><th>SD</th><th>Min</th><th>Max</th>';
+  html += '</tr></thead><tbody>';
+
+  variables.forEach(v => {
+    html += '<tr>';
+    html += `<td>${escapeHtml(v.name_kr || '')}</td>`;
+    html += `<td><code>${escapeHtml(v.name_en || '')}</code></td>`;
+    html += `<td><span class="role-badge role-${(v.role || '').replace(/\s/g, '')}">${escapeHtml(v.role || '')}</span></td>`;
+    html += `<td>${escapeHtml(v.type || '')}</td>`;
+    html += `<td>${v.mean != null ? escapeHtml(String(v.mean)) : '—'}</td>`;
+    html += `<td>${v.sd != null ? escapeHtml(String(v.sd)) : '—'}</td>`;
+    html += `<td>${v.min != null ? escapeHtml(String(v.min)) : '—'}</td>`;
+    html += `<td>${v.max != null ? escapeHtml(String(v.max)) : '—'}</td>`;
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  wrapEl.innerHTML = html;
+}
+
+/* ============================================================================
+   메소드 네비게이션 렌더링
+   ============================================================================ */
+
+function renderMethodNav() {
+  const navEl = $('method-nav');
+  if (!navEl) return;
+
+  const methods = getMethods();
+  if (!methods || methods.length === 0) {
+    navEl.innerHTML = '';
+    return;
+  }
+
+  let html = '<div class="method-nav-container">';
+  methods.forEach((method, idx) => {
+    const activeClass = idx === 0 ? 'active' : '';
+    html += `<button class="method-nav-btn ${activeClass}" data-method-idx="${idx}">`;
+    html += escapeHtml(method.raw_name || `방법 ${idx + 1}`);
+    html += '</button>';
+  });
+  html += '</div>';
+
+  navEl.innerHTML = html;
+}
+
+/* ============================================================================
+   탭 전환 핸들러 설정
+   ============================================================================ */
+
+function setupTabHandlers() {
+  // 결과 탭 전환
+  const tabBtns = document.querySelectorAll('.result-tab');
+  const panels = document.querySelectorAll('.result-panel');
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const panelId = btn.getAttribute('data-panel');
+
+      // 기존 활성 탭 비활성화
+      tabBtns.forEach(b => b.classList.remove('active'));
+      panels.forEach(p => p.classList.remove('active'));
+
+      // 선택된 탭 활성화
+      btn.classList.add('active');
+      const targetPanel = $(`panel-${panelId}`);
+      if (targetPanel) {
+        targetPanel.classList.add('active');
+
+        // Tab 2 (practice) 클릭 시 분석 스텝 로드
+        if (panelId === 'practice') {
+          loadAndRenderAnalysisSteps(currentMethodIndex);
+        }
+
+        // Tab 3 (review) 클릭 시 리뷰 & 대안 버튼 표시
+        if (panelId === 'review') {
+          // 버튼은 이미 HTML에 있음
+        }
+      }
     });
   });
 }
 
-/* ============================================================
-   대화형 Q&A 바인딩
-   ============================================================ */
+/* ============================================================================
+   메소드 네비게이션 핸들러
+   ============================================================================ */
 
-function bindQnA() {
-  const sendBtn = $('qna-send');
-  const input = $('qna-input');
-  const chatArea = $('qna-chat');
+function setupMethodNavHandlers() {
+  const methodBtns = document.querySelectorAll('.method-nav-btn');
+  methodBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const methodIdx = parseInt(btn.getAttribute('data-method-idx'), 10);
+      currentMethodIndex = methodIdx;
 
-  if (!sendBtn || !input || !chatArea) return;
+      // 활성 버튼 업데이트
+      methodBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
 
-  // Q&A 영역 표시
-  const qnaCard = sendBtn.closest('.panel-window-body') || sendBtn.closest('.card');
-  if (qnaCard) qnaCard.style.display = '';
+      // 현재 탭이 practice 또는 review라면 리로드
+      const currentPanel = document.querySelector('.result-panel.active');
+      if (currentPanel) {
+        const panelId = currentPanel.getAttribute('id');
+        if (panelId === 'panel-practice') {
+          loadAndRenderAnalysisSteps(methodIdx);
+        } else if (panelId === 'panel-review') {
+          // 리뷰도 메소드에 따라 바뀌므로 리로드 필요
+          clearReviewSections();
+        }
+      }
+    });
+  });
+}
 
-  const handleSend = async () => {
-    const question = input.value.trim();
-    const apiKey = dom.apiKey.value.trim();
-    if (!question || !apiKey) return;
+/* ============================================================================
+   언어 토글 핸들러 (Python/R)
+   ============================================================================ */
 
-    // 사용자 질문 표시
-    chatArea.innerHTML += `<div class="qna-msg qna-user"><b>Q:</b> ${escapeHtml(question)}</div>`;
-    input.value = '';
+function setupLanguageToggleHandlers() {
+  const langBtns = document.querySelectorAll('.code-lang-tab');
+  langBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lang = btn.getAttribute('data-lang');
+      currentLanguage = lang;
+
+      // 활성 버튼 업데이트
+      langBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // 현재 탭이 practice라면 코드 업데이트
+      const practicePanel = $('panel-practice');
+      if (practicePanel && practicePanel.classList.contains('active')) {
+        updatePracticeStepsForLanguage(lang);
+      }
+    });
+  });
+}
+
+/* ============================================================================
+   분석 스텝 로드 및 렌더링 (Tab 2)
+   ============================================================================ */
+
+async function loadAndRenderAnalysisSteps(methodIndex) {
+  try {
+    const stepsContainer = $('practice-steps');
+    if (!stepsContainer) return;
 
     // 로딩 표시
-    const loadingId = `qna-loading-${Date.now()}`;
-    chatArea.innerHTML += `<div class="qna-msg qna-loading" id="${loadingId}">💬 답변 생성 중...</div>`;
-    chatArea.scrollTop = chatArea.scrollHeight;
+    stepsContainer.innerHTML = '<div class="loading-text">분석 스텝 로드 중...</div>';
 
-    try {
-      const ctx = _analysisData?.paper_context || {};
-      const text = _paperText || '';
-      const answer = await runQnA(apiKey, question, text, ctx);
-
-      const loadingEl = $(loadingId);
-      if (loadingEl) loadingEl.remove();
-
-      chatArea.innerHTML += `<div class="qna-msg qna-bot"><b>A:</b> ${simpleMarkdownToHtml(answer)}</div>`;
-    } catch (err) {
-      const loadingEl = $(loadingId);
-      if (loadingEl) loadingEl.remove();
-      chatArea.innerHTML += `<div class="qna-msg qna-bot text-danger">오류: ${escapeHtml(err.message)}</div>`;
+    const result = await loadAnalysisSteps(methodIndex);
+    if (!result || !result.steps) {
+      stepsContainer.innerHTML = '<p>분석 스텝을 찾을 수 없습니다.</p>';
+      return;
     }
 
-    chatArea.scrollTop = chatArea.scrollHeight;
-  };
+    // 스텝 카드 렌더링
+    let html = '';
+    result.steps.forEach((step, idx) => {
+      html += renderStepCard(step, idx, methodIndex);
+    });
 
-  sendBtn.addEventListener('click', handleSend);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+    stepsContainer.innerHTML = html;
+
+    // 실행 버튼 핸들러 설정
+    setupStepExecutionHandlers(methodIndex);
+  } catch (error) {
+    console.error('분석 스텝 로드 오류:', error);
+    const stepsContainer = $('practice-steps');
+    if (stepsContainer) {
+      stepsContainer.innerHTML = '<p>오류: 분석 스텝을 로드할 수 없습니다.</p>';
     }
+  }
+}
+
+function renderStepCard(step, stepIdx, methodIndex) {
+  const stepId = step.id || `step-${stepIdx}`;
+  const lang = currentLanguage;
+  const code = (step.codeTemplate && step.codeTemplate[lang]) || step[`code_${lang}`] || step.code || '';
+
+  let html = `<div class="step-card" data-step-idx="${stepIdx}" data-step-id="${stepId}">`;
+  html += `<div class="step-header">`;
+  html += `<h3 class="step-title">${escapeHtml(step.title || `Step ${stepIdx + 1}`)}</h3>`;
+  html += `</div>`;
+
+  if (step.description) {
+    html += `<div class="step-description">`;
+    html += markdownToHtml(step.description);
+    html += `</div>`;
+  }
+
+  // 코드 블록 (접을 수 있음)
+  html += `<div class="step-code-section">`;
+  html += `<button class="code-toggle" data-step-idx="${stepIdx}">💻 코드 보기</button>`;
+  html += `<pre class="code-block" data-step-idx="${stepIdx}" style="display:none;">`;
+  html += `<code>${escapeHtml(code)}</code>`;
+  html += `</pre>`;
+  html += `</div>`;
+
+  // 실행 버튼
+  html += `<button class="btn-execute" data-step-idx="${stepIdx}" data-step-id="${stepId}">🚀 실행</button>`;
+
+  // 결과 영역 (처음에는 숨김)
+  html += `<div class="step-result" data-step-idx="${stepIdx}" style="display:none; margin-top: 10px;">`;
+  html += `</div>`;
+
+  html += `</div>`;
+  return html;
+}
+
+function setupStepExecutionHandlers(methodIndex) {
+  // 코드 토글 핸들러
+  const codeToggles = document.querySelectorAll('.code-toggle');
+  codeToggles.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const stepIdx = btn.getAttribute('data-step-idx');
+      const codeBlock = document.querySelector(`.code-block[data-step-idx="${stepIdx}"]`);
+      if (codeBlock) {
+        const isHidden = codeBlock.style.display === 'none';
+        codeBlock.style.display = isHidden ? 'block' : 'none';
+        btn.textContent = isHidden ? '💻 코드 숨기기' : '💻 코드 보기';
+      }
+    });
+  });
+
+  // 실행 버튼 핸들러
+  const executeButtons = document.querySelectorAll('.btn-execute');
+  executeButtons.forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const stepIdx = parseInt(btn.getAttribute('data-step-idx'), 10);
+      const stepId = btn.getAttribute('data-step-id');
+      const lang = currentLanguage;
+
+      // 코드 가져오기
+      const codeBlock = document.querySelector(`.code-block[data-step-idx="${stepIdx}"]`);
+      const code = codeBlock ? codeBlock.textContent : '';
+
+      await executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx);
+    });
   });
 }
 
-/* ============================================================
-   간이 마크다운 → HTML 변환
-   ============================================================ */
+async function executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx) {
+  try {
+    const resultDiv = document.querySelector(`.step-result[data-step-idx="${stepIdx}"]`);
+    if (!resultDiv) return;
 
-function simpleMarkdownToHtml(md) {
-  // 1단계: 인라인 서식 변환
-  let html = md
-    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^# (.+)$/gm, '<h3>$1</h3>')
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>');
+    resultDiv.innerHTML = '<div class="loading-text">실행 중...</div>';
+    resultDiv.style.display = 'block';
 
-  // 2단계: 리스트 변환 — 연속된 리스트 아이템을 그룹으로 묶기
-  html = html
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
+    const result = await executeStep(methodIndex, stepId, code, lang);
 
-  // 연속된 <li>를 <ul>로 감싸기 (비연속 리스트는 별도 <ul>)
-  html = html.replace(/((?:<li>.*?<\/li>\s*)+)/g, '<ul>$1</ul>');
+    // 결과 렌더링
+    let resultHtml = '<div class="step-execution-result">';
 
-  // 3단계: 줄바꿈
-  html = html
-    .replace(/\n\n/g, '<br><br>')
-    .replace(/\n/g, '<br>');
+    if (result.table) {
+      resultHtml += '<div class="result-subsection"><h4>📊 결과 테이블</h4>';
+      resultHtml += renderResultTable(result.table);
+      resultHtml += '</div>';
+    }
+
+    if (result.chartDesc) {
+      resultHtml += '<div class="result-subsection"><h4>📈 차트 설명</h4>';
+      resultHtml += `<p>${escapeHtml(result.chartDesc)}</p>`;
+      resultHtml += '</div>';
+    }
+
+    if (result.interpretation) {
+      resultHtml += '<div class="result-subsection"><h4>🔍 해석</h4>';
+      resultHtml += markdownToHtml(result.interpretation);
+      resultHtml += '</div>';
+    }
+
+    if (result.paperComparison) {
+      resultHtml += '<div class="result-subsection"><h4>📄 논문 비교</h4>';
+      resultHtml += markdownToHtml(result.paperComparison);
+      resultHtml += '</div>';
+    }
+
+    resultHtml += '</div>';
+    resultDiv.innerHTML = resultHtml;
+  } catch (error) {
+    console.error('스텝 실행 오류:', error);
+    const resultDiv = document.querySelector(`.step-result[data-step-idx="${stepIdx}"]`);
+    if (resultDiv) {
+      resultDiv.innerHTML = `<p style="color: #e74c3c;">오류: ${escapeHtml(error.message)}</p>`;
+      resultDiv.style.display = 'block';
+    }
+  }
+}
+
+function updatePracticeStepsForLanguage(lang) {
+  // 언어 변경 시 전체 스텝을 다시 렌더링 (코드 템플릿이 언어별로 다름)
+  loadAndRenderAnalysisSteps(currentMethodIndex);
+}
+
+/**
+ * 결과 테이블 렌더링 — 마크다운 테이블 문자열을 HTML로 변환
+ * simulator.js가 마크다운 테이블 형식으로 반환하므로 문자열을 파싱
+ * @param {string|Array} tableData — 마크다운 테이블 문자열 또는 객체 배열
+ * @returns {string} HTML
+ */
+function renderResultTable(tableData) {
+  if (!tableData) return '';
+
+  // 문자열(마크다운 테이블)인 경우 — simulator.js 기본 반환 형식
+  if (typeof tableData === 'string') {
+    return markdownTableToHtml(tableData);
+  }
+
+  // 배열인 경우 — 직접 테이블 생성
+  if (Array.isArray(tableData) && tableData.length > 0) {
+    const headers = Object.keys(tableData[0]);
+    let html = '<table class="result-table"><thead><tr>';
+    headers.forEach(h => { html += `<th>${escapeHtml(h)}</th>`; });
+    html += '</tr></thead><tbody>';
+    tableData.forEach(row => {
+      html += '<tr>';
+      headers.forEach(h => {
+        let value = row[h];
+        if (typeof value === 'number') value = value.toFixed(4);
+        html += `<td>${escapeHtml(String(value ?? ''))}</td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  return '<p>데이터 없음</p>';
+}
+
+/**
+ * 마크다운 테이블 문자열 → HTML 테이블 변환
+ * @param {string} md — | col1 | col2 | 형식의 마크다운
+ * @returns {string} HTML
+ */
+function markdownTableToHtml(md) {
+  if (!md || !md.includes('|')) return `<div class="result-text">${markdownToHtml(md)}</div>`;
+
+  const lines = md.trim().split('\n').filter(l => l.trim());
+  if (lines.length < 2) return `<div class="result-text">${markdownToHtml(md)}</div>`;
+
+  let html = '<table class="result-table">';
+
+  lines.forEach((line, idx) => {
+    // 구분선(---) 건너뛰기
+    if (/^\|[\s\-:]+\|$/.test(line.trim()) || /^[\s\-:|]+$/.test(line.trim())) return;
+
+    const cells = line.split('|').filter(c => c.trim() !== '');
+    if (cells.length === 0) return;
+
+    if (idx === 0) {
+      html += '<thead><tr>';
+      cells.forEach(c => { html += `<th>${escapeHtml(c.trim())}</th>`; });
+      html += '</tr></thead><tbody>';
+    } else {
+      html += '<tr>';
+      cells.forEach(c => { html += `<td>${escapeHtml(c.trim())}</td>`; });
+      html += '</tr>';
+    }
+  });
+
+  html += '</tbody></table>';
+  return html;
+}
+
+/* ============================================================================
+   리뷰 & 대안 (Tab 3)
+   ============================================================================ */
+
+function setupReviewHandlers() {
+  const subTabBtns = document.querySelectorAll('.interpret-sub-tab');
+  const reviewSections = document.querySelectorAll('.review-section');
+
+  subTabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const subTab = btn.getAttribute('data-sub');
+
+      subTabBtns.forEach(b => b.classList.remove('active'));
+      reviewSections.forEach(s => s.classList.remove('active'));
+
+      btn.classList.add('active');
+      const targetSection = $(`review-${subTab}`);
+      if (targetSection) {
+        targetSection.classList.add('active');
+      }
+    });
+  });
+
+  // 리뷰 & 대안 생성 버튼
+  const reviewBtn = $('review-generate-btn');
+  if (reviewBtn) {
+    reviewBtn.addEventListener('click', async () => {
+      await generateReviewAndAlternatives(currentMethodIndex);
+    });
+  }
+}
+
+async function generateReviewAndAlternatives(methodIndex) {
+  try {
+    const peerSection = $('review-peer');
+    const altSection = $('review-alt');
+    const futureSection = $('review-future');
+
+    if (peerSection) peerSection.innerHTML = '<div class="loading-text">로드 중...</div>';
+    if (altSection) altSection.innerHTML = '<div class="loading-text">로드 중...</div>';
+    if (futureSection) futureSection.innerHTML = '<div class="loading-text">로드 중...</div>';
+
+    const result = await loadReview(methodIndex);
+
+    if (peerSection && result.peer) {
+      peerSection.innerHTML = markdownToHtml(result.peer);
+    }
+    if (altSection && result.alternatives) {
+      altSection.innerHTML = markdownToHtml(result.alternatives);
+    }
+    if (futureSection && result.future) {
+      futureSection.innerHTML = markdownToHtml(result.future);
+    }
+  } catch (error) {
+    console.error('리뷰 로드 오류:', error);
+    showStatus('리뷰를 로드할 수 없습니다.');
+  }
+}
+
+function clearReviewSections() {
+  const sections = document.querySelectorAll('.review-section');
+  sections.forEach(s => {
+    s.innerHTML = '';
+  });
+}
+
+/* ============================================================================
+   Q&A 채팅 (Tab 4)
+   ============================================================================ */
+
+function setupQnAHandlers() {
+  const qnaInput = $('qna-input');
+  const qnaSendBtn = $('qna-send');
+
+  if (qnaSendBtn) {
+    qnaSendBtn.addEventListener('click', async () => {
+      const question = qnaInput ? qnaInput.value.trim() : '';
+      if (!question) return;
+
+      await sendQnAMessage(question);
+      if (qnaInput) qnaInput.value = '';
+    });
+  }
+
+  // 엔터 키 전송
+  if (qnaInput) {
+    qnaInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        qnaSendBtn.click();
+      }
+    });
+  }
+}
+
+async function sendQnAMessage(question) {
+  try {
+    const chatDiv = $('qna-chat');
+    if (!chatDiv) return;
+
+    // 사용자 메시지 추가
+    const userMsg = document.createElement('div');
+    userMsg.className = 'qna-message user-message';
+    userMsg.textContent = question;
+    chatDiv.appendChild(userMsg);
+
+    // 로딩 메시지
+    const loadingMsg = document.createElement('div');
+    loadingMsg.className = 'qna-message loading-message';
+    loadingMsg.textContent = 'AI 응답 생성 중...';
+    chatDiv.appendChild(loadingMsg);
+
+    // 스크롤 하단으로
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+
+    // AI 응답 가져오기
+    const answer = await sendQnA(question);
+
+    // 로딩 메시지 제거
+    loadingMsg.remove();
+
+    // AI 응답 추가
+    const aiMsg = document.createElement('div');
+    aiMsg.className = 'qna-message ai-message';
+    aiMsg.innerHTML = markdownToHtml(answer);
+    chatDiv.appendChild(aiMsg);
+
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  } catch (error) {
+    console.error('Q&A 오류:', error);
+    const chatDiv = $('qna-chat');
+    if (chatDiv) {
+      const errMsg = document.createElement('div');
+      errMsg.className = 'qna-message error-message';
+      errMsg.textContent = `오류: ${error.message}`;
+      chatDiv.appendChild(errMsg);
+    }
+  }
+}
+
+/* ============================================================================
+   홈 링크 핸들러 (새 논문 분석)
+   ============================================================================ */
+
+function setupHomeLink() {
+  const homeLink = document.querySelector('.home-link');
+  if (homeLink) {
+    homeLink.addEventListener('click', () => {
+      // 상태 초기화 후 showInputView() 호출
+      mockDataCache = null;
+      currentMethodIndex = 0;
+      currentLanguage = 'python';
+
+      // 입력 뷰로 돌아가기
+      showInputView();
+
+      // PDF 파일 입력 초기화
+      const pdfInput = $('pdf-file');
+      if (pdfInput) pdfInput.value = '';
+
+      showPdfFileName('파일을 선택해주세요');
+    });
+  }
+}
+
+/* ============================================================================
+   실습 데이터 생성 (Mock Data)
+   ============================================================================ */
+
+function setupMockDataGeneration() {
+  const mockDataBtn = $('gen-mockdata-btn');
+  const downloadCsvBtn = $('download-csv-btn');
+  const mockDataStatus = $('mockdata-status');
+
+  if (mockDataBtn) {
+    mockDataBtn.addEventListener('click', async () => {
+      try {
+        mockDataBtn.disabled = true;
+        if (mockDataStatus) mockDataStatus.innerHTML = '<div class="loading-text">데이터 생성 중...</div>';
+
+        const dataStructure = getDataStructure();
+        mockDataCache = await generateMockData(dataStructure);
+
+        if (mockDataStatus) {
+          mockDataStatus.innerHTML = `<p style="color: #27ae60;">✅ 데이터 생성 완료 (${mockDataCache.length}행)</p>`;
+        }
+
+        if (downloadCsvBtn) downloadCsvBtn.style.display = 'inline-block';
+      } catch (error) {
+        console.error('Mock 데이터 생성 오류:', error);
+        if (mockDataStatus) {
+          mockDataStatus.innerHTML = `<p style="color: #e74c3c;">❌ 오류: ${escapeHtml(error.message)}</p>`;
+        }
+      } finally {
+        mockDataBtn.disabled = false;
+      }
+    });
+  }
+
+  if (downloadCsvBtn) {
+    downloadCsvBtn.addEventListener('click', async () => {
+      try {
+        if (!mockDataCache) {
+          showStatus('먼저 실습 데이터를 생성해주세요.');
+          return;
+        }
+        downloadCSV(mockDataCache, 'mock_data.csv');
+        showStatus('CSV 파일이 다운로드되었습니다.');
+      } catch (error) {
+        console.error('CSV 다운로드 오류:', error);
+        showStatus('CSV 다운로드 중 오류가 발생했습니다.');
+      }
+    });
+  }
+}
+
+/* ============================================================================
+   Markdown to HTML 변환 (간단한 구현)
+   ============================================================================ */
+
+function markdownToHtml(markdown) {
+  if (!markdown) return '';
+
+  let html = escapeHtml(markdown);
+
+  // 헤더 (# -> <h3>, ## -> <h4>, etc.)
+  html = html.replace(/^### (.*?)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^## (.*?)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^# (.*?)$/gm, '<h2>$1</h2>');
+
+  // 굵은 글씨 (**text** -> <strong>text</strong>)
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+  // 기울임 (*text* -> <em>text</em>)
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+  // 코드 블록 (```code``` -> <pre><code>code</code></pre>)
+  html = html.replace(/```(.*?)```/gs, '<pre><code>$1</code></pre>');
+
+  // 인라인 코드 (`code` -> <code>code</code>)
+  html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+
+  // 리스트 (- item -> <li>item</li>)
+  html = html.replace(/^- (.*?)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*?<\/li>)/s, '<ul>$1</ul>');
+
+  // 순서 리스트 (1. item -> <li>item</li>)
+  html = html.replace(/^\d+\. (.*?)$/gm, '<li>$1</li>');
+
+  // 줄바꿈
+  html = html.replace(/\n/g, '<br>');
 
   return html;
 }
