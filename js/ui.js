@@ -99,10 +99,12 @@ export function updateLoadingStep(stepIndex, status) {
     const step = steps[stepIndex];
     const icon = step.querySelector('.loading-step-icon');
     if (status === 'running') {
-      step.classList.add('active');
+      step.classList.add('running');
+      step.classList.remove('done');
       if (icon) icon.textContent = '⏳';
     } else if (status === 'done') {
-      step.classList.remove('active');
+      step.classList.remove('running');
+      step.classList.add('done');
       if (icon) icon.textContent = '✅';
     }
   }
