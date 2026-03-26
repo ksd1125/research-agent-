@@ -33,22 +33,12 @@ function init() {
     });
   }
 
-  // ===== 분석 깊이 선택 =====
-  const depthBtns = document.querySelectorAll('.depth-btn');
-  depthBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      depthBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
-  });
-
   // ===== 분석 시작 =====
   if (analyzeBtn) {
     analyzeBtn.addEventListener('click', () => {
       const apiKey = getApiKey();
       if (!apiKey) {
         ui.showStatus('API 키를 먼저 입력해주세요. 상단 🔑 API 키 > 설정 버튼을 눌러주세요.');
-        // API 키 입력 영역 자동 펼침
         const body = document.getElementById('api-key-body');
         if (body) body.style.display = 'block';
         const input = document.getElementById('api-key-input');
@@ -56,16 +46,12 @@ function init() {
         return;
       }
 
-      // 분석 깊이
-      const activeDepth = document.querySelector('.depth-btn.active');
-      const depth = activeDepth ? activeDepth.dataset.depth : 'basic';
-
       // 선택된 섹션
       const selectedSections = [];
       document.querySelectorAll('#section-selector input:checked')
         .forEach(chk => selectedSections.push(chk.value));
 
-      runInitialPipeline(apiKey, depth, selectedSections);
+      runInitialPipeline(apiKey, selectedSections);
     });
   }
 

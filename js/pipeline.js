@@ -47,7 +47,6 @@ const state = {
   simulationResults: {},   // 시뮬레이션 결과 캐시: { 'methodIdx-stepId': result }
   reviewResult: null,      // Agent 6+ 결과 (peer, alternatives, future)
   selectedMethod: 0,       // 현재 선택된 방법론 인덱스
-  depth: 'basic',          // 분석 깊이 (basic, intermediate, advanced)
   selectedSections: [],    // 선택된 분석 대상 섹션
 };
 
@@ -69,12 +68,10 @@ export function getDocResult() { return state.docResult; }
 /**
  * 초기 파이프라인 실행
  * @param {string} apiKey — Gemini API 키
- * @param {string} depth — 분석 깊이 (basic/intermediate/advanced)
  * @param {string[]} selectedSections — 분석 대상 섹션
  */
-export async function runInitialPipeline(apiKey, depth, selectedSections) {
+export async function runInitialPipeline(apiKey, selectedSections) {
   state.apiKey = apiKey;
-  state.depth = depth || 'basic';
   state.selectedSections = selectedSections || [];
 
   const pdfBase64 = getPdfBase64();
@@ -335,6 +332,5 @@ export function resetState() {
   state.simulationResults = {};
   state.reviewResult = null;
   state.selectedMethod = 0;
-  state.depth = 'basic';
   state.selectedSections = [];
 }
