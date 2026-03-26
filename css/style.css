@@ -235,37 +235,6 @@ body {
   display: block;
 }
 
-/* 분석 깊이 선택 버튼 그룹 */
-.depth-selector {
-  display: flex;
-  gap: 6px;
-}
-.depth-btn {
-  flex: 1;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--transition);
-  font-family: inherit;
-  text-align: center;
-}
-.depth-btn:hover {
-  background: #F0F4FA;
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-.depth-btn.active {
-  background: var(--color-primary);
-  color: #FFF;
-  border-color: var(--color-primary);
-  font-weight: 600;
-}
-
 /* 섹션 선택 체크박스 */
 .section-selector {
   display: flex;
@@ -825,6 +794,83 @@ body {
   color: #FFF;
 }
 
+/* CSV 업로드 버튼 */
+.btn-upload-csv {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-info, #3498db);
+  background: rgba(52, 152, 219, 0.08);
+  color: var(--color-info, #3498db);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+  margin-left: 8px;
+}
+.btn-upload-csv:hover {
+  background: var(--color-info, #3498db);
+  color: #FFF;
+}
+
+/* 데이터 프리뷰 */
+.data-preview-header {
+  margin-bottom: 8px;
+}
+.data-table-scroll {
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.data-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: clamp(10px, 1.2vw, 12px);
+  white-space: nowrap;
+}
+.data-preview-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.data-preview-table th {
+  background: var(--color-primary);
+  color: #FFF;
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  border-bottom: 2px solid rgba(0,0,0,0.15);
+}
+.data-preview-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+.data-preview-table tbody tr:hover {
+  background: rgba(52, 152, 219, 0.05);
+}
+.data-preview-table .row-num {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  text-align: center;
+  width: 30px;
+  background: var(--color-bg-alt, #f8f9fa);
+}
+.data-preview-footer {
+  padding: 6px 10px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-style: italic;
+  border-top: 1px solid var(--color-border);
+}
+
 /* ============================================================
    Code Section (Python/R 코드)
    ============================================================ */
@@ -951,6 +997,278 @@ pre {
   border-color: var(--color-primary-light);
   color: var(--color-primary);
   animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Step 액션 버튼 컨테이너 */
+.step-action-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+/* Python 실행 버튼 */
+.btn-run-python {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #306998;
+  background: rgba(48, 105, 152, 0.08);
+  color: #306998;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+  white-space: nowrap;
+}
+.btn-run-python:hover { background: #306998; color: #FFD43B; }
+.btn-run-python:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Pyodide 상태 표시 */
+.pyodide-loading {
+  padding: 8px 12px;
+  background: rgba(48, 105, 152, 0.06);
+  border-left: 3px solid #306998;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: #306998;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.pyodide-error {
+  padding: 8px 12px;
+  background: rgba(231, 76, 60, 0.06);
+  border-left: 3px solid var(--color-danger, #e74c3c);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--color-danger, #e74c3c);
+}
+
+/* Python 실행 결과 */
+.python-execution-result {
+  border: 1px solid rgba(48, 105, 152, 0.2);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.result-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  margin: 10px 10px 0;
+}
+.python-badge {
+  background: rgba(48, 105, 152, 0.1);
+  color: #306998;
+  border: 1px solid rgba(48, 105, 152, 0.25);
+}
+.python-stdout {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: clamp(11px, 1.2vw, 13px);
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.python-error {
+  background: rgba(231, 76, 60, 0.06);
+  color: var(--color-danger, #e74c3c);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+.python-chart-wrap {
+  margin: 8px 0;
+  text-align: center;
+}
+.python-chart-img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #FFF;
+}
+
+/* ============================================================
+   APA 7th Edition 스타일
+   ============================================================ */
+
+/* APA 테이블 컨테이너 */
+.apa-table-wrap {
+  margin: 12px 0;
+  font-family: 'Times New Roman', 'Georgia', serif;
+}
+.apa-table-caption {
+  margin-bottom: 6px;
+}
+.apa-table-number {
+  font-weight: bold;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.apa-table-title {
+  font-style: italic;
+  font-size: 13px;
+  color: var(--color-text);
+  margin-top: 2px;
+}
+
+/* APA 3선 테이블 */
+.apa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: clamp(11px, 1.3vw, 13px);
+  border-top: 2px solid #000;
+  border-bottom: 2px solid #000;
+}
+.apa-table thead tr {
+  border-bottom: 1px solid #000;
+}
+.apa-table th {
+  padding: 6px 10px;
+  text-align: center;
+  font-weight: normal;
+  font-style: italic;
+  font-size: 12px;
+  color: var(--color-text);
+  vertical-align: bottom;
+}
+.apa-table th:first-child {
+  text-align: left;
+  font-style: normal;
+  font-weight: 600;
+}
+.apa-table td {
+  padding: 4px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text);
+}
+.apa-table .apa-row-label {
+  text-align: left;
+  font-weight: normal;
+  padding-left: 14px;
+}
+.apa-table .apa-cell-value {
+  font-variant-numeric: tabular-nums;
+}
+.apa-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+/* APA 테이블 노트 */
+.apa-table-note {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+  padding-top: 4px;
+  font-family: 'Times New Roman', 'Georgia', serif;
+}
+
+/* APA Figure */
+.apa-figure-wrap {
+  margin: 14px 0;
+  text-align: center;
+}
+.apa-figure-img-wrap {
+  margin-bottom: 8px;
+}
+.apa-figure-img {
+  max-width: 100%;
+  height: auto;
+  border: none;
+  background: #FFF;
+}
+.apa-figure-caption {
+  text-align: left;
+  font-family: 'Times New Roman', 'Georgia', serif;
+  font-size: 12px;
+  color: var(--color-text);
+  line-height: 1.5;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.apa-figure-label {
+  font-weight: normal;
+}
+
+/* APA 보고서 버튼 */
+.apa-report-action {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border);
+}
+.btn-apa-report {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #8b5cf6;
+  background: rgba(139, 92, 246, 0.06);
+  color: #8b5cf6;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+}
+.btn-apa-report:hover {
+  background: #8b5cf6;
+  color: #FFF;
+}
+
+/* APA 보고서 결과 영역 */
+.apa-report-content {
+  margin-top: 12px;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.apa-badge {
+  background: rgba(139, 92, 246, 0.08);
+  color: #8b5cf6;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+}
+.apa-text-section {
+  padding: 10px 14px;
+}
+.apa-text-section h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8b5cf6;
+  margin-bottom: 6px;
+}
+.apa-report-text {
+  font-family: 'Times New Roman', 'Georgia', serif;
+  font-size: 13px;
+  line-height: 2;
+  color: var(--color-text);
+  text-indent: 2em;
+}
+.apa-report-text p {
+  margin-bottom: 0;
+  text-indent: 2em;
+}
+.apa-report-text p:first-child {
+  text-indent: 0;
+}
+.apa-table-caption-text {
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
 
 .step-executor-body { padding: 0 14px 14px; }
@@ -1629,5 +1947,4 @@ textarea { resize: vertical; line-height: 1.6; min-height: 140px; }
   .loading-steps { gap: 4px; }
   .loading-step-icon { width: 36px; height: 36px; font-size: 16px; }
   .loading-step-text { font-size: 8px; }
-  .depth-selector { flex-direction: column; }
 }
