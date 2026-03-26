@@ -221,54 +221,130 @@ function clamp(val, min, max) {
 }
 
 /**
+ * 변수의 type과 role에 따라 합리적인 기술통계 추정값 생성
+ * Agent 4+가 mean/sd를 추출하지 못했을 때 사용
+ */
+function estimateVariableStats(v) {
+  const type = (v.type || 'continuous').toLowerCase();
+  const role = (v.role || '').toLowerCase();
+  const name = (v.name_en || '').toLowerCase();
+
+  if (type === 'binary') {
+    const p = 0.3 + Math.random() * 0.4;
+    return { mean: Math.round(p * 100) / 100, sd: Math.round(Math.sqrt(p * (1 - p)) * 100) / 100, min: 0, max: 1 };
+  }
+  if (type === 'categorical') {
+    const nLevels = (v.levels && v.levels.length) || 3;
+    return { mean: null, sd: null, min: 1, max: nLevels };
+  }
+  if (type === 'ordinal') {
+    const lo = v.min != null ? v.min : 1;
+    const hi = v.max != null ? v.max : 5;
+    return { mean: Math.round((lo + hi) / 2 * 100) / 100, sd: Math.round((hi - lo) / 4 * 100) / 100, min: lo, max: hi };
+  }
+  if (name.includes('age') || name.includes('연령')) return { mean: 42, sd: 12, min: 18, max: 80 };
+  if (name.includes('income') || name.includes('revenue') || name.includes('sales') || name.includes('wage') || name.includes('소득') || name.includes('매출'))
+    return { mean: 3500, sd: 2000, min: 0, max: 15000 };
+  if (name.includes('edu') || name.includes('school') || name.includes('학력')) return { mean: 14, sd: 3, min: 6, max: 22 };
+  if (name.includes('experience') || name.includes('tenure') || name.includes('경력')) return { mean: 8, sd: 5, min: 0, max: 35 };
+  if (name.includes('rate') || name.includes('ratio') || name.includes('비율')) return { mean: 0.45, sd: 0.2, min: 0, max: 1 };
+  if (name.includes('score') || name.includes('index') || name.includes('점수') || name.includes('지수')) return { mean: 55, sd: 18, min: 0, max: 100 };
+  if (name.includes('size') || name.includes('count') || name.includes('num_') || name.includes('규모')) return { mean: 25, sd: 15, min: 1, max: 100 };
+  if (name.includes('cost') || name.includes('price') || name.includes('amount') || name.includes('비용') || name.includes('가격')) return { mean: 500, sd: 300, min: 0, max: 3000 };
+  if (name.includes('duration') || name.includes('time') || name.includes('period') || name.includes('기간')) return { mean: 12, sd: 6, min: 1, max: 48 };
+  if (name.includes('satisf') || name.includes('만족') || name.includes('likert')) return { mean: 3.5, sd: 0.9, min: 1, max: 5 };
+  if (role.includes('dependent') || role.includes('outcome') || role.includes('target')) return { mean: 50, sd: 20, min: 0, max: 100 };
+  if (role.includes('treatment') || role.includes('factor')) return { mean: 0.5, sd: 0.5, min: 0, max: 1 };
+  return { mean: 30, sd: 15, min: 0, max: 100 };
+}
+
+/**
  * 기술통계 기반 가상 데이터셋 생성
+ * Agent 4+가 mean/sd를 추출하지 못해도 변수 구조 기반으로 500행 생성
  *
- * @param {Object} stats — extractDescriptiveStats 결과
- * @param {number} [n] — 생성할 관측치 수 (기본: 원본 표본 크기)
+ * @param {Object} stats — extractDescriptiveStats 또는 Agent4+ 결과
+ * @param {number} [n=500] — 생성할 관측치 수 (기본 500행)
  * @returns {{ csv: string, data: Array<Object>, variables: Array }}
  */
-export function generateMockData(stats, n = null) {
-  const sampleSize = n || stats.sample_size || 500;
+export function generateMockData(stats, n = 500) {
+  const sampleSize = n || 500;
   const variables = stats.variables || [];
-  const data = [];
 
+  if (variables.length === 0) {
+    throw new Error('변수 정보가 없습니다. 논문 분석을 먼저 진행해주세요.');
+  }
+
+  // 1단계: 빠진 통계를 추정하여 보완
+  const enrichedVars = variables.map(v => {
+    const enriched = { ...v };
+    const hasMean = (v.mean != null && v.mean !== '' && !isNaN(v.mean));
+    const hasSd   = (v.sd != null && v.sd !== '' && !isNaN(v.sd));
+    const hasMin  = (v.min != null && v.min !== '' && !isNaN(v.min));
+    const hasMax  = (v.max != null && v.max !== '' && !isNaN(v.max));
+    const type = (v.type || 'continuous').toLowerCase();
+
+    if (type === 'binary' || type === 'categorical') {
+      if (!hasMean || !hasMin || !hasMax) {
+        const est = estimateVariableStats(v);
+        if (!hasMean) enriched.mean = est.mean;
+        if (!hasMin) enriched.min = est.min;
+        if (!hasMax) enriched.max = est.max;
+        if (!hasSd) enriched.sd = est.sd;
+        enriched._estimated = true;
+      }
+      return enriched;
+    }
+    if (!hasMean || !hasSd) {
+      const est = estimateVariableStats(v);
+      if (!hasMean) enriched.mean = est.mean;
+      if (!hasSd) enriched.sd = est.sd;
+      if (!hasMin) enriched.min = est.min;
+      if (!hasMax) enriched.max = est.max;
+      enriched._estimated = true;
+    } else {
+      if (!hasMin) enriched.min = Math.round((enriched.mean - 3 * enriched.sd) * 100) / 100;
+      if (!hasMax) enriched.max = Math.round((enriched.mean + 3 * enriched.sd) * 100) / 100;
+    }
+    return enriched;
+  });
+
+  // 2단계: 데이터 생성
+  const data = [];
   for (let i = 0; i < sampleSize; i++) {
     const row = {};
-
-    for (const v of variables) {
+    for (const v of enrichedVars) {
       const { name_en, mean, sd, min, max, type, levels } = v;
-
-      if (type === 'binary') {
-        // 이진 변수: 평균 = 확률
+      const t = (type || 'continuous').toLowerCase();
+      if (t === 'binary') {
         row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
-      } else if (type === 'categorical' && levels && levels.length > 0) {
-        // 범주형 변수: levels에서 균등 랜덤 선택
+      } else if (t === 'categorical' && levels && levels.length > 0) {
         row[name_en] = levels[Math.floor(Math.random() * levels.length)];
-      } else if (type === 'ordinal' || (Number.isInteger(min) && Number.isInteger(max) && max - min <= 10)) {
-        // 서열/이산 변수: 정규분포 → 반올림 → 클램핑
-        let val = normalRandom(mean || 0, sd || 1);
+      } else if (t === 'ordinal' || (Number.isInteger(min) && Number.isInteger(max) && max - min <= 10)) {
+        let val = normalRandom(mean || 3, sd || 1);
         val = Math.round(val);
-        row[name_en] = clamp(val, min ?? 0, max ?? 10);
+        row[name_en] = clamp(val, min ?? 1, max ?? 5);
       } else {
-        // 연속 변수: 정규분포 → 클램핑
-        let val = normalRandom(mean || 0, sd || 1);
+        let val = normalRandom(mean || 30, sd || 15);
         val = clamp(val, min ?? -Infinity, max ?? Infinity);
-        row[name_en] = Math.round(val * 100) / 100; // 소수점 2자리
+        row[name_en] = Math.round(val * 100) / 100;
       }
     }
-
     data.push(row);
   }
 
-  // CSV 생성
-  const headers = variables.map(v => v.name_en);
+  // 3단계: CSV 생성
+  const headers = enrichedVars.map(v => v.name_en);
   const csvRows = [headers.join(',')];
   for (const row of data) {
-    csvRows.push(headers.map(h => row[h] ?? '').join(','));
+    csvRows.push(headers.map(h => {
+      const val = row[h];
+      if (typeof val === 'string' && val.includes(',')) return `"${val}"`;
+      return val ?? '';
+    }).join(','));
   }
   const csv = csvRows.join('\n');
 
-  return { csv, data, variables };
+  return { csv, data, variables: enrichedVars };
 }
 
 /**

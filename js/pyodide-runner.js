@@ -60,27 +60,33 @@ async function _doInit(onProgress) {
     indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/',
   });
 
-  report('📦 기본 패키지 설치 중... (pandas, numpy, scipy)');
+  report('📦 기본 패키지 설치 중... (pandas, numpy, scipy, statsmodels)');
 
-  // 기본 패키지 설치
-  await pyodide.loadPackage(['micropip']);
-  const micropip = pyodide.pyimport('micropip');
+  // 기본 패키지 일괄 설치 (병렬 로드)
+  const builtinPackages = ['micropip', 'pandas', 'numpy', 'scipy', 'matplotlib'];
+  try {
+    await pyodide.loadPackage(builtinPackages);
+    builtinPackages.forEach(p => installedPackages.add(p));
+  } catch (bulkErr) {
+    console.warn('일괄 패키지 로드 실패, 개별 설치 시도:', bulkErr.message);
+    for (const pkg of builtinPackages) {
+      try { await pyodide.loadPackage(pkg); installedPackages.add(pkg); }
+      catch { console.warn(`패키지 ${pkg} 개별 설치 실패`); }
+    }
+  }
 
-  // 핵심 통계 패키지 설치
-  const basePackages = ['pandas', 'numpy', 'scipy', 'matplotlib'];
-  for (const pkg of basePackages) {
+  // statsmodels 사전 설치 (통계분석 핵심)
+  report('📦 statsmodels 설치 중...');
+  try {
+    await pyodide.loadPackage('statsmodels');
+    installedPackages.add('statsmodels');
+  } catch {
     try {
-      report(`📦 ${pkg} 설치 중...`);
-      await pyodide.loadPackage(pkg);
-      installedPackages.add(pkg);
-    } catch {
-      // loadPackage 실패 시 micropip으로 시도
-      try {
-        await micropip.install(pkg);
-        installedPackages.add(pkg);
-      } catch (e2) {
-        console.warn(`패키지 ${pkg} 설치 실패:`, e2.message);
-      }
+      const micropip = pyodide.pyimport('micropip');
+      await micropip.install('statsmodels');
+      installedPackages.add('statsmodels');
+    } catch (e2) {
+      console.warn('statsmodels 설치 실패 (필요 시 재시도됨):', e2.message);
     }
   }
 

@@ -221,6 +221,23 @@ export function renderInitialResult(docResult, dataStructure) {
     setupReviewHandlers();
 
     showResultView();
+
+    // === 자동 데이터 생성: dataStructure가 있으면 바로 500행 생성 ===
+    if (dataStructure && dataStructure.variables && dataStructure.variables.length > 0) {
+      try {
+        mockDataCache = generateMockData(dataStructure, 500);
+        const statusEl = $('mockdata-status');
+        if (statusEl) {
+          statusEl.innerHTML = `<p style="color: #27ae60;">✅ 데이터 자동 생성 완료 (${mockDataCache.data.length}행 × ${mockDataCache.variables.length}변수)</p>`;
+        }
+        const downloadBtn = $('download-csv-btn');
+        if (downloadBtn) downloadBtn.style.display = 'inline-block';
+        renderDataPreview(mockDataCache.data, mockDataCache.variables);
+        renderVariableTable(mockDataCache.variables);
+      } catch (autoErr) {
+        console.warn('자동 데이터 생성 실패 (수동 생성 가능):', autoErr.message);
+      }
+    }
   } catch (error) {
     console.error('초기 결과 렌더링 중 오류:', error);
     showStatus('결과 렌더링 중 오류가 발생했습니다.');
@@ -309,15 +326,17 @@ function renderVariableTable(variables) {
   html += '</tr></thead><tbody>';
 
   variables.forEach(v => {
+    const est = v._estimated ? ' title="추정값 (논문에서 추출 불가)"' : '';
+    const estStyle = v._estimated ? ' style="color: #7f8c8d; font-style: italic;"' : '';
     html += '<tr>';
     html += `<td>${escapeHtml(v.name_kr || '')}</td>`;
     html += `<td><code>${escapeHtml(v.name_en || '')}</code></td>`;
     html += `<td><span class="role-badge role-${(v.role || '').replace(/\s/g, '')}">${escapeHtml(v.role || '')}</span></td>`;
     html += `<td>${escapeHtml(v.type || '')}</td>`;
-    html += `<td>${v.mean != null ? escapeHtml(String(v.mean)) : '—'}</td>`;
-    html += `<td>${v.sd != null ? escapeHtml(String(v.sd)) : '—'}</td>`;
-    html += `<td>${v.min != null ? escapeHtml(String(v.min)) : '—'}</td>`;
-    html += `<td>${v.max != null ? escapeHtml(String(v.max)) : '—'}</td>`;
+    html += `<td${est}${estStyle}>${v.mean != null ? escapeHtml(String(v.mean)) + (v._estimated ? '~' : '') : '—'}</td>`;
+    html += `<td${est}${estStyle}>${v.sd != null ? escapeHtml(String(v.sd)) + (v._estimated ? '~' : '') : '—'}</td>`;
+    html += `<td${est}${estStyle}>${v.min != null ? escapeHtml(String(v.min)) + (v._estimated ? '~' : '') : '—'}</td>`;
+    html += `<td${est}${estStyle}>${v.max != null ? escapeHtml(String(v.max)) + (v._estimated ? '~' : '') : '—'}</td>`;
     html += '</tr>';
   });
 
@@ -657,10 +676,23 @@ async function executePythonStep(code, stepIdx) {
   resultDiv.style.display = 'block';
 
   try {
-    // CSV 데이터 준비
-    const csvData = mockDataCache ? mockDataCache.csv : null;
+    // CSV 데이터 준비 — 없으면 자동 생성 시도
+    let csvData = mockDataCache ? mockDataCache.csv : null;
     if (!csvData) {
-      resultDiv.innerHTML = '<div class="pyodide-error">⚠️ 먼저 실습 데이터를 생성하거나 CSV를 업로드해주세요.</div>';
+      const ds = getDataStructure();
+      if (ds && ds.variables && ds.variables.length > 0) {
+        try {
+          mockDataCache = generateMockData(ds, 500);
+          csvData = mockDataCache.csv;
+          const statusEl = $('mockdata-status');
+          if (statusEl) statusEl.innerHTML = `<p style="color: #27ae60;">✅ 실습용 데이터 자동 생성 (${mockDataCache.data.length}행 × ${mockDataCache.variables.length}변수)</p>`;
+        } catch (autoErr) {
+          console.warn('자동 데이터 생성 실패:', autoErr.message);
+        }
+      }
+    }
+    if (!csvData) {
+      resultDiv.innerHTML = '<div class="pyodide-error">⚠️ 먼저 "논문 개요 & 데이터" 탭에서 🧪 실습 데이터 생성 버튼을 눌러주세요.<br><small>또는 내 CSV 파일을 업로드할 수 있습니다.</small></div>';
       return;
     }
 

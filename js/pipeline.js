@@ -241,9 +241,11 @@ export async function executeStep(methodIndex, stepId, code, lang) {
  * @returns {Promise<{ peer: string, alternatives: string, future: string }>}
  */
 export async function loadReview(methodIndex = 0) {
-  // 캐시 확인
-  if (state.reviewResult) {
-    return state.reviewResult;
+  // 캐시를 methodIndex별로 관리
+  if (!state.reviewResults) state.reviewResults = {};
+
+  if (state.reviewResults[methodIndex]) {
+    return state.reviewResults[methodIndex];
   }
 
   const method = state.methods[methodIndex];
@@ -255,6 +257,8 @@ export async function loadReview(methodIndex = 0) {
   const result = await runReviewGuide(
     state.apiKey, state.paperContext, statResult, method
   );
+  state.reviewResults[methodIndex] = result;
+  // 하위 호환: 기존 reviewResult도 업데이트
   state.reviewResult = result;
   return result;
 }
@@ -331,6 +335,7 @@ export function resetState() {
   state.steps = {};
   state.simulationResults = {};
   state.reviewResult = null;
+  state.reviewResults = {};
   state.selectedMethod = 0;
   state.selectedSections = [];
 }
