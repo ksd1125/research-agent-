@@ -20,6 +20,13 @@ import {
   getPaperText
 } from './pipeline.js';
 import { escapeHtml, copyToClipboard } from './utils.js';
+import { initPyodide, runPython, isPyodideReady } from './pyodide-runner.js';
+import {
+  renderApaTable,
+  renderApaFigures,
+  renderApaText,
+  generateApaReport,
+} from './apa-renderer.js';
 
 /* ============================================================================
    DOM 헬퍼 & 상태 관리
@@ -29,6 +36,8 @@ const $ = (id) => document.getElementById(id);
 let currentMethodIndex = 0;
 let currentLanguage = 'python';
 let mockDataCache = null;
+/** @type {boolean} Pyodide 초기화 중 여부 */
+let pyodideInitializing = false;
 
 /* ============================================================================
    뷰 전환 함수 (UI 표시/숨김)
@@ -494,8 +503,16 @@ function renderStepCard(step, stepIdx, methodIndex) {
   html += `</pre>`;
   html += `</div>`;
 
-  // 실행 버튼
-  html += `<button class="btn-execute" data-step-idx="${stepIdx}" data-step-id="${stepId}">🚀 실행</button>`;
+  // 실행 버튼 영역
+  html += `<div class="step-action-buttons">`;
+  if (lang === 'python') {
+    html += `<button class="btn-run-python" data-step-idx="${stepIdx}" data-step-id="${stepId}">🐍 Python 실행</button>`;
+  }
+  html += `<button class="btn-execute" data-step-idx="${stepIdx}" data-step-id="${stepId}">🤖 AI 시뮬레이션</button>`;
+  html += `</div>`;
+
+  // Pyodide 상태 표시 영역
+  html += `<div class="pyodide-status" data-step-idx="${stepIdx}" style="display:none;"></div>`;
 
   // 결과 영역 (처음에는 숨김)
   html += `<div class="step-result" data-step-idx="${stepIdx}" style="display:none; margin-top: 10px;">`;
@@ -520,7 +537,7 @@ function setupStepExecutionHandlers(methodIndex) {
     });
   });
 
-  // 실행 버튼 핸들러
+  // AI 시뮬레이션 버튼 핸들러
   const executeButtons = document.querySelectorAll('.btn-execute');
   executeButtons.forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -528,11 +545,23 @@ function setupStepExecutionHandlers(methodIndex) {
       const stepId = btn.getAttribute('data-step-id');
       const lang = currentLanguage;
 
-      // 코드 가져오기
       const codeBlock = document.querySelector(`.code-block[data-step-idx="${stepIdx}"]`);
       const code = codeBlock ? codeBlock.textContent : '';
 
       await executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx);
+    });
+  });
+
+  // 🐍 Python 실행 버튼 핸들러
+  const pythonButtons = document.querySelectorAll('.btn-run-python');
+  pythonButtons.forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const stepIdx = parseInt(btn.getAttribute('data-step-idx'), 10);
+
+      const codeBlock = document.querySelector(`.code-block[data-step-idx="${stepIdx}"]`);
+      const code = codeBlock ? codeBlock.textContent : '';
+
+      await executePythonStep(code, stepIdx);
     });
   });
 }
@@ -583,6 +612,188 @@ async function executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx) {
       resultDiv.innerHTML = `<p style="color: #e74c3c;">오류: ${escapeHtml(error.message)}</p>`;
       resultDiv.style.display = 'block';
     }
+  }
+}
+
+/**
+ * Python 코드를 Pyodide로 실제 실행
+ * @param {string} code — Python 코드
+ * @param {number} stepIdx — Step 인덱스 (결과 렌더링 위치)
+ */
+async function executePythonStep(code, stepIdx) {
+  const resultDiv = document.querySelector(`.step-result[data-step-idx="${stepIdx}"]`);
+  const statusDiv = document.querySelector(`.pyodide-status[data-step-idx="${stepIdx}"]`);
+  if (!resultDiv) return;
+
+  // Pyodide 초기화 (최초 1회)
+  if (!isPyodideReady() && !pyodideInitializing) {
+    pyodideInitializing = true;
+    if (statusDiv) {
+      statusDiv.style.display = 'block';
+      statusDiv.innerHTML = '<div class="pyodide-loading">🐍 Python 환경 로딩 중... (최초 1회, 약 5~10초)</div>';
+    }
+    try {
+      await initPyodide((msg) => {
+        if (statusDiv) statusDiv.innerHTML = `<div class="pyodide-loading">${escapeHtml(msg)}</div>`;
+      });
+    } catch (err) {
+      if (statusDiv) {
+        statusDiv.innerHTML = `<div class="pyodide-error">❌ Python 환경 로드 실패: ${escapeHtml(err.message)}</div>`;
+      }
+      pyodideInitializing = false;
+      return;
+    }
+    pyodideInitializing = false;
+    if (statusDiv) statusDiv.style.display = 'none';
+  } else if (pyodideInitializing) {
+    // 이미 초기화 중이면 대기
+    resultDiv.innerHTML = '<div class="loading-text">Python 환경 로딩 대기 중...</div>';
+    resultDiv.style.display = 'block';
+    return;
+  }
+
+  // 실행 중 UI
+  resultDiv.innerHTML = '<div class="loading-text">🐍 Python 코드 실행 중...</div>';
+  resultDiv.style.display = 'block';
+
+  try {
+    // CSV 데이터 준비
+    const csvData = mockDataCache ? mockDataCache.csv : null;
+    if (!csvData) {
+      resultDiv.innerHTML = '<div class="pyodide-error">⚠️ 먼저 실습 데이터를 생성하거나 CSV를 업로드해주세요.</div>';
+      return;
+    }
+
+    // 실행
+    const result = await runPython(code, csvData);
+
+    // 결과 렌더링
+    let html = '<div class="python-execution-result">';
+    html += '<div class="result-badge python-badge">🐍 Python 실행 결과</div>';
+
+    // stdout 출력
+    if (result.stdout && result.stdout.trim()) {
+      html += '<div class="result-subsection">';
+      html += '<h4>📋 출력 (stdout)</h4>';
+      html += `<pre class="python-stdout">${escapeHtml(result.stdout)}</pre>`;
+      html += '</div>';
+
+      // APA 테이블 자동 변환
+      const apaTableHtml = renderApaTable(result.stdout, 1);
+      if (apaTableHtml) {
+        html += '<div class="result-subsection">';
+        html += '<h4>📑 APA Style Table</h4>';
+        html += apaTableHtml;
+        html += '</div>';
+      }
+    }
+
+    // 그래프 이미지 (APA Figure 스타일)
+    if (result.images && result.images.length > 0) {
+      html += '<div class="result-subsection">';
+      html += `<h4>📊 APA Figure (${result.images.length}개)</h4>`;
+      html += renderApaFigures(result.images, 1);
+      html += '</div>';
+    }
+
+    // 에러 (부분 실행 성공 + 에러)
+    if (result.error) {
+      html += '<div class="result-subsection">';
+      html += '<h4>⚠️ 오류</h4>';
+      html += `<pre class="python-error">${escapeHtml(result.error)}</pre>`;
+      html += '</div>';
+    }
+
+    // 출력이 전혀 없을 때
+    if ((!result.stdout || !result.stdout.trim()) && (!result.images || result.images.length === 0) && !result.error) {
+      html += '<div class="result-subsection"><p>코드가 실행되었으나 출력이 없습니다.</p></div>';
+    }
+
+    // APA 보고서 생성 버튼 (stdout이 있을 때만)
+    if (result.stdout && result.stdout.trim() && !result.error) {
+      html += `<div class="apa-report-action">`;
+      html += `<button class="btn-apa-report" data-step-idx="${stepIdx}">📝 APA 스타일 해석 보고서 생성</button>`;
+      html += `</div>`;
+      html += `<div class="apa-report-result" data-step-idx="${stepIdx}" style="display:none;"></div>`;
+    }
+
+    html += '</div>';
+    resultDiv.innerHTML = html;
+
+    // APA 보고서 생성 버튼 이벤트 바인딩
+    const apaBtn = resultDiv.querySelector(`.btn-apa-report[data-step-idx="${stepIdx}"]`);
+    if (apaBtn) {
+      apaBtn.addEventListener('click', async () => {
+        await generateAndRenderApaReport(stepIdx, result.stdout, result.images);
+      });
+    }
+  } catch (error) {
+    console.error('Python 실행 오류:', error);
+    resultDiv.innerHTML = `<div class="pyodide-error">❌ 실행 오류: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+/**
+ * APA 스타일 해석 보고서 생성 (Gemini 호출)
+ * @param {number} stepIdx
+ * @param {string} stdout — Python 실행 결과
+ * @param {string[]} images — 그래프 이미지 (base64)
+ */
+async function generateAndRenderApaReport(stepIdx, stdout, images) {
+  const reportDiv = document.querySelector(`.apa-report-result[data-step-idx="${stepIdx}"]`);
+  if (!reportDiv) return;
+
+  reportDiv.style.display = 'block';
+  reportDiv.innerHTML = '<div class="loading-text">📝 APA 스타일 보고서 생성 중...</div>';
+
+  try {
+    const state = getState();
+    const apiKey = state.apiKey;
+    const methods = getMethods();
+    const paperContext = getPaperContext();
+    const currentMethod = methods[currentMethodIndex] || {};
+
+    const context = {
+      stepTitle: document.querySelector(`.step-card[data-step-idx="${stepIdx}"] .step-title`)?.textContent || '',
+      analysisType: currentMethod.analysis_type || '',
+      domain: paperContext?.domain || '',
+      outcome: currentMethod.key_variables?.outcome || '',
+      treatment: currentMethod.key_variables?.treatment || '',
+    };
+
+    const apa = await generateApaReport(apiKey, stdout, context);
+
+    let html = '<div class="apa-report-content">';
+    html += '<div class="result-badge apa-badge">📝 APA 7th Edition 결과 보고서</div>';
+
+    // APA 텍스트 보고
+    if (apa.text) {
+      html += '<div class="apa-text-section">';
+      html += '<h4>결과 보고 (Results)</h4>';
+      html += `<div class="apa-report-text">${renderApaText(apa.text)}</div>`;
+      html += '</div>';
+    }
+
+    // APA Figure caption 업데이트
+    if (apa.figureCaption && images && images.length > 0) {
+      html += '<div class="apa-text-section">';
+      html += '<h4>Figure Caption</h4>';
+      html += renderApaFigures(images, 1, apa.figureCaption);
+      html += '</div>';
+    }
+
+    // Table caption
+    if (apa.tableCaption) {
+      html += '<div class="apa-text-section">';
+      html += `<p class="apa-table-caption-text"><em>Table caption:</em> ${escapeHtml(apa.tableCaption)}</p>`;
+      html += '</div>';
+    }
+
+    html += '</div>';
+    reportDiv.innerHTML = html;
+  } catch (error) {
+    console.error('APA 보고서 생성 오류:', error);
+    reportDiv.innerHTML = `<div class="pyodide-error">APA 보고서 생성 실패: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -833,8 +1044,12 @@ function setupHomeLink() {
 function setupMockDataGeneration() {
   const mockDataBtn = $('gen-mockdata-btn');
   const downloadCsvBtn = $('download-csv-btn');
+  const uploadCsvBtn = $('upload-csv-btn');
+  const csvFileInput = $('csv-file-input');
   const mockDataStatus = $('mockdata-status');
+  const dataPreview = $('data-preview');
 
+  // ===== 가상 데이터 생성 =====
   if (mockDataBtn) {
     mockDataBtn.addEventListener('click', async () => {
       try {
@@ -842,13 +1057,17 @@ function setupMockDataGeneration() {
         if (mockDataStatus) mockDataStatus.innerHTML = '<div class="loading-text">데이터 생성 중...</div>';
 
         const dataStructure = getDataStructure();
-        mockDataCache = await generateMockData(dataStructure);
+        mockDataCache = generateMockData(dataStructure);
+        // mockDataCache = { csv, data, variables }
 
         if (mockDataStatus) {
-          mockDataStatus.innerHTML = `<p style="color: #27ae60;">✅ 데이터 생성 완료 (${mockDataCache.length}행)</p>`;
+          mockDataStatus.innerHTML = `<p style="color: #27ae60;">✅ 데이터 생성 완료 (${mockDataCache.data.length}행 × ${mockDataCache.variables.length}변수)</p>`;
         }
 
         if (downloadCsvBtn) downloadCsvBtn.style.display = 'inline-block';
+
+        // 데이터 프리뷰 렌더링
+        renderDataPreview(mockDataCache.data, mockDataCache.variables);
       } catch (error) {
         console.error('Mock 데이터 생성 오류:', error);
         if (mockDataStatus) {
@@ -860,14 +1079,15 @@ function setupMockDataGeneration() {
     });
   }
 
+  // ===== CSV 다운로드 =====
   if (downloadCsvBtn) {
-    downloadCsvBtn.addEventListener('click', async () => {
+    downloadCsvBtn.addEventListener('click', () => {
       try {
-        if (!mockDataCache) {
+        if (!mockDataCache || !mockDataCache.csv) {
           showStatus('먼저 실습 데이터를 생성해주세요.');
           return;
         }
-        downloadCSV(mockDataCache, 'mock_data.csv');
+        downloadCSV(mockDataCache.csv, 'mock_data.csv');
         showStatus('CSV 파일이 다운로드되었습니다.');
       } catch (error) {
         console.error('CSV 다운로드 오류:', error);
@@ -875,6 +1095,147 @@ function setupMockDataGeneration() {
       }
     });
   }
+
+  // ===== CSV 업로드 =====
+  if (uploadCsvBtn && csvFileInput) {
+    uploadCsvBtn.addEventListener('click', () => csvFileInput.click());
+    csvFileInput.addEventListener('change', () => {
+      const file = csvFileInput.files[0];
+      if (!file) return;
+      handleCsvUpload(file);
+    });
+  }
+}
+
+/**
+ * CSV 파일 업로드 처리
+ * @param {File} file
+ */
+function handleCsvUpload(file) {
+  const mockDataStatus = $('mockdata-status');
+  const downloadCsvBtn = $('download-csv-btn');
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const text = e.target.result;
+      const { data, variables, csv } = parseCsvText(text);
+
+      if (data.length === 0) {
+        if (mockDataStatus) mockDataStatus.innerHTML = '<p style="color: #e74c3c;">❌ CSV 파일에 데이터가 없습니다.</p>';
+        return;
+      }
+
+      mockDataCache = { csv: text, data, variables };
+
+      if (mockDataStatus) {
+        mockDataStatus.innerHTML = `<p style="color: #27ae60;">✅ 데이터 업로드 완료: ${file.name} (${data.length}행 × ${variables.length}변수)</p>`;
+      }
+      if (downloadCsvBtn) downloadCsvBtn.style.display = 'inline-block';
+
+      renderDataPreview(data, variables);
+    } catch (err) {
+      console.error('CSV 파싱 오류:', err);
+      if (mockDataStatus) {
+        mockDataStatus.innerHTML = `<p style="color: #e74c3c;">❌ CSV 파싱 오류: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+/**
+ * CSV 텍스트를 파싱하여 data 배열 + variables 배열로 변환
+ * @param {string} text — CSV 텍스트
+ * @returns {{ data: Array<Object>, variables: Array, csv: string }}
+ */
+function parseCsvText(text) {
+  // BOM 제거
+  const cleaned = text.replace(/^\uFEFF/, '');
+  const lines = cleaned.split(/\r?\n/).filter(line => line.trim());
+
+  if (lines.length < 2) throw new Error('헤더와 데이터가 최소 1행 필요합니다.');
+
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const variables = headers.map(name => ({
+    name_en: name,
+    name_kr: name,
+    type: 'continuous',
+    role: 'unknown',
+  }));
+
+  const data = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const row = {};
+    for (let j = 0; j < headers.length; j++) {
+      const val = values[j];
+      // 숫자 여부 판별
+      const num = Number(val);
+      row[headers[j]] = (val !== '' && !isNaN(num)) ? num : val;
+    }
+    data.push(row);
+  }
+
+  // 변수 타입 추론
+  for (const v of variables) {
+    const vals = data.map(r => r[v.name_en]).filter(x => x !== '' && x !== undefined);
+    const numericCount = vals.filter(x => typeof x === 'number').length;
+    if (numericCount < vals.length * 0.5) {
+      v.type = 'categorical';
+    } else {
+      const uniq = new Set(vals);
+      if (uniq.size <= 2 && vals.every(x => x === 0 || x === 1)) {
+        v.type = 'binary';
+      }
+    }
+  }
+
+  return { data, variables, csv: cleaned };
+}
+
+/**
+ * 데이터 프리뷰 테이블 렌더링 (최대 20행)
+ * @param {Array<Object>} data
+ * @param {Array} variables
+ */
+function renderDataPreview(data, variables) {
+  const container = $('data-preview');
+  if (!container) return;
+
+  const maxRows = 20;
+  const displayData = data.slice(0, maxRows);
+  const headers = variables.map(v => v.name_en);
+
+  let html = `<div class="data-preview-header">
+    <span class="info-badge">📊 데이터 프리뷰 (${data.length}행 중 상위 ${Math.min(maxRows, data.length)}행)</span>
+  </div>`;
+
+  html += '<div class="data-table-scroll"><table class="data-preview-table"><thead><tr>';
+  html += '<th>#</th>';
+  for (const h of headers) {
+    html += `<th>${escapeHtml(h)}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  for (let i = 0; i < displayData.length; i++) {
+    html += `<tr><td class="row-num">${i + 1}</td>`;
+    for (const h of headers) {
+      const val = displayData[i][h];
+      const display = val !== undefined && val !== null ? String(val) : '';
+      html += `<td>${escapeHtml(display)}</td>`;
+    }
+    html += '</tr>';
+  }
+
+  html += '</tbody></table></div>';
+
+  if (data.length > maxRows) {
+    html += `<div class="data-preview-footer">... ${data.length - maxRows}행 더 있음</div>`;
+  }
+
+  container.innerHTML = html;
+  container.style.display = 'block';
 }
 
 /* ============================================================================
