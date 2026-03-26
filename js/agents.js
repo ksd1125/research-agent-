@@ -79,6 +79,70 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000) {
   return candidate.content.parts.map(p => p.text || '').join('');
 }
 
+/**
+ * Gemini API에 PDF 바이너리(base64) + 텍스트 프롬프트 전송 (멀티모달)
+ * PDF의 표, 그림, 수식을 직접 인식하여 정확도 향상.
+ *
+ * @param {string} apiKey
+ * @param {string} pdfBase64 — PDF 파일의 base64 인코딩 문자열
+ * @param {string} prompt    — 텍스트 프롬프트
+ * @param {number} [maxTokens=8000]
+ * @returns {Promise<string>} — 응답 텍스트
+ */
+export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8000) {
+  if (!apiKey) throw new Error(MESSAGES.errors.noApiKey);
+  if (!pdfBase64) throw new Error('PDF 데이터가 없습니다.');
+
+  const url = `${API.baseUrl}/${API.defaultModel}:generateContent?key=${apiKey}`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [
+            {
+              inline_data: {
+                mime_type: 'application/pdf',
+                data: pdfBase64,
+              },
+            },
+            { text: prompt },
+          ],
+        }],
+        generationConfig: {
+          temperature: API.defaultTemp,
+          maxOutputTokens: maxTokens,
+        },
+      }),
+      signal: _abortController?.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('파이프라인이 취소되었습니다.');
+    throw new Error(`네트워크 오류: ${err.message}`);
+  }
+
+  if (!response.ok) {
+    const status = response.status;
+    if (status === 429) throw new Error('API 호출 한도 초과 — 잠시 후 다시 시도해주세요.');
+    if (status === 401 || status === 403) throw new Error('API 키가 유효하지 않습니다. 키를 확인해주세요.');
+    // 413: payload too large — PDF 크기 초과
+    if (status === 413) throw new Error('PDF 파일이 API 크기 제한을 초과합니다. 더 작은 파일을 사용해주세요.');
+    throw new Error(`API 오류 (HTTP ${status}): ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+
+  const candidate = data.candidates?.[0];
+  if (!candidate) throw new Error(MESSAGES.errors.emptyResponse);
+
+  return candidate.content.parts.map(p => p.text || '').join('');
+}
+
 /* ============================================================
    Agent 1: 문서 분석기 — 도메인/방법론 감지
    ============================================================ */

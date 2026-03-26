@@ -134,10 +134,14 @@ export function showPdfProgress(message) {
   if (fileNameEl) fileNameEl.textContent = message;
 }
 
-export function showPdfSuccess(pages, charCount) {
+export function showPdfSuccess(pages, sizeKB) {
   const fileNameEl = $('file-name');
   if (fileNameEl) {
-    fileNameEl.textContent = `✅ 추출 완료: ${pages}페이지, ${charCount}자`;
+    // sizeKB가 1024 이상이면 MB로 표시
+    const sizeStr = sizeKB >= 1024
+      ? `${(sizeKB / 1024).toFixed(1)}MB`
+      : `${sizeKB}KB`;
+    fileNameEl.textContent = `✅ 준비 완료: ${pages}페이지, ${sizeStr}`;
   }
 }
 

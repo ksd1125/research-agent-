@@ -24,7 +24,7 @@ import {
   abortPipeline,
   getAnalysisProfile,
 } from './agents.js';
-import { getExtractedText } from './pdf.js';
+import { getExtractedText, getPdfBase64 } from './pdf.js';
 import { convertPdfToMarkdown } from './mockdata.js';
 import { getStepsForCategory } from './steps.js';
 import { simulateExecution, simulateAlternativeMethod } from './simulator.js';
@@ -77,11 +77,12 @@ export async function runInitialPipeline(apiKey, depth, selectedSections) {
   state.depth = depth || 'basic';
   state.selectedSections = selectedSections || [];
 
+  const pdfBase64 = getPdfBase64();
   const rawInput = getExtractedText();
 
-  // 입력 검증
-  if (!apiKey)    { ui.showStatus(MESSAGES.errors.noApiKey);  return; }
-  if (!rawInput)  { ui.showStatus(MESSAGES.errors.noPdfText); return; }
+  // 입력 검증: PDF base64 또는 텍스트 입력 중 하나는 있어야 함
+  if (!apiKey)                  { ui.showStatus(MESSAGES.errors.noApiKey);  return; }
+  if (!pdfBase64 && !rawInput)  { ui.showStatus(MESSAGES.errors.noPdfText); return; }
 
   // UI: 로딩 시작
   createAbortController();
@@ -90,13 +91,20 @@ export async function runInitialPipeline(apiKey, depth, selectedSections) {
   try {
     // ===== Step 0: PDF → Markdown 변환 =====
     ui.updateLoadingStep(0, 'running');
-    ui.setLoadingMessage('PDF 텍스트를 구조화된 마크다운으로 변환 중...');
+    if (pdfBase64) {
+      ui.setLoadingMessage('PDF를 Gemini 멀티모달로 분석하여 구조화 중... (표/그림 직접 인식)');
+    } else {
+      ui.setLoadingMessage('PDF 텍스트를 구조화된 마크다운으로 변환 중...');
+    }
 
-    let inputText = rawInput;
+    let inputText = rawInput || '';
     try {
-      inputText = await convertPdfToMarkdown(apiKey, rawInput);
+      inputText = await convertPdfToMarkdown(apiKey, pdfBase64, rawInput);
     } catch (err) {
       console.warn('PDF→MD 변환 실패, 원본 텍스트 사용:', err.message);
+      // 폴백: rawInput이 있으면 그대로 사용
+      if (!rawInput) throw err;
+      inputText = rawInput;
     }
     state.paperText = inputText;
     ui.updateLoadingStep(0, 'done');

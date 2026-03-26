@@ -8,13 +8,31 @@
 
 import { API } from './config.js';
 import { safeParseJSON } from './utils.js';
-import { callGemini } from './agents.js';
+import { callGemini, callGeminiWithPdf } from './agents.js';
 
 /* ============================================================
-   PDF → Markdown 변환 (Gemini 기반)
+   PDF → Markdown 변환 (Gemini 멀티모달 기반)
    ============================================================ */
 
-function buildPdfToMdPrompt(rawText) {
+/** PDF→MD 변환 프롬프트 (Gemini 멀티모달용) */
+const PDF_TO_MD_PROMPT = `당신은 '학술 문서 구조화 전문가'입니다.
+
+첨부된 PDF 논문을 **구조화된 마크다운(Markdown)**으로 변환하세요.
+
+규칙:
+1. 논문의 원래 구조(제목, 초록, 서론, 문헌검토, 연구방법, 결과, 결론 등)를 # / ## / ### 헤딩으로 표현
+2. 표(Table)는 마크다운 테이블(| ... |)로 변환. 숫자 정확도를 유지
+3. 수식은 인라인 $...$ 또는 블록 $$...$$ 형태로 표현
+4. 각주·참고문헌은 원문 유지
+5. 불필요한 줄바꿈, 깨진 문자, 헤더/푸터(페이지번호 등) 제거
+6. 한국어 논문이면 한국어 그대로 유지
+7. 원문의 내용을 절대 삭제하거나 요약하지 말 것 — 전문을 구조화만 하세요
+8. 그림(Figure)은 [Figure X: 캡션 내용] 형태로 위치와 설명을 표시
+
+마크다운만 출력하고 다른 설명은 붙이지 마세요.`;
+
+/** 텍스트 기반 PDF→MD 변환 프롬프트 (폴백용) */
+function buildPdfToMdPromptFromText(rawText) {
   return `당신은 '학술 문서 구조화 전문가'입니다.
 
 아래 PDF에서 추출한 원시 텍스트를 **구조화된 마크다운(Markdown)**으로 변환하세요.
@@ -35,33 +53,47 @@ ${rawText}
 }
 
 /**
- * PDF 원시 텍스트를 Gemini로 마크다운으로 변환
+ * PDF를 Gemini 멀티모달로 마크다운 변환
+ * PDF base64가 있으면 직접 전송, 없으면 텍스트 기반 폴백.
+ *
  * @param {string} apiKey
- * @param {string} rawText — pdf.js에서 추출한 원시 텍스트
+ * @param {string|null} pdfBase64 — PDF base64 데이터 (없으면 rawText 사용)
+ * @param {string|null} rawText   — pdf.js 추출 텍스트 (폴백용)
  * @returns {Promise<string>} — 구조화된 마크다운 텍스트
  */
-export async function convertPdfToMarkdown(apiKey, rawText) {
-  // 텍스트가 너무 길면 Gemini 토큰 제한 때문에 분할 처리
-  const MAX_CHUNK = 25000; // 글자 수 기준
+export async function convertPdfToMarkdown(apiKey, pdfBase64, rawText) {
+  // 방법 1: PDF base64 → Gemini 멀티모달 (표/그림 직접 인식)
+  if (pdfBase64) {
+    try {
+      return await callGeminiWithPdf(apiKey, pdfBase64, PDF_TO_MD_PROMPT, 8000);
+    } catch (err) {
+      console.warn('Gemini 멀티모달 PDF→MD 실패, 텍스트 폴백 시도:', err.message);
+      // 멀티모달 실패 시 텍스트 기반 폴백으로 전환
+    }
+  }
 
+  // 방법 2: 텍스트 기반 변환 (폴백)
+  if (!rawText) {
+    throw new Error('PDF 데이터와 텍스트 모두 없습니다.');
+  }
+
+  const MAX_CHUNK = 25000;
   if (rawText.length <= MAX_CHUNK) {
-    const prompt = buildPdfToMdPrompt(rawText);
+    const prompt = buildPdfToMdPromptFromText(rawText);
     return await callGemini(apiKey, prompt, 8000);
   }
 
-  // 긴 텍스트: 청크 분할 → 각각 변환 → 합치기
+  // 긴 텍스트: 청크 분할
   const chunks = [];
   for (let i = 0; i < rawText.length; i += MAX_CHUNK) {
     chunks.push(rawText.slice(i, i + MAX_CHUNK));
   }
-
   const mdParts = [];
   for (let i = 0; i < chunks.length; i++) {
-    const chunkPrompt = buildPdfToMdPrompt(chunks[i]);
+    const chunkPrompt = buildPdfToMdPromptFromText(chunks[i]);
     const md = await callGemini(apiKey, chunkPrompt, 8000);
     mdParts.push(md);
   }
-
   return mdParts.join('\n\n---\n\n');
 }
 
