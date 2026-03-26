@@ -6,6 +6,8 @@
   <title>ResearchMethodAgent v5.0</title>
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Pyodide: 브라우저 내 Python 실행 (WebAssembly) -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
 </head>
 <body>
   <div class="container">
@@ -122,9 +124,12 @@
               <div id="data-preview-wrap" style="margin-top:10px"></div>
               <div style="margin-top:10px">
                 <button class="btn-mockdata" id="gen-mockdata-btn">🧪 실습 데이터 생성</button>
+                <button class="btn-upload-csv" id="upload-csv-btn">📤 내 CSV 업로드</button>
+                <input type="file" id="csv-file-input" accept=".csv" style="display:none">
                 <button class="btn-download" id="download-csv-btn" style="display:none">📥 CSV 다운로드</button>
               </div>
               <div id="mockdata-status" style="margin-top:8px"></div>
+              <div id="data-preview" style="display:none;margin-top:12px"></div>
             </div>
           </div>
         </div>
