@@ -18,6 +18,19 @@ export function escapeHtml(str) {
 }
 
 /**
+ * <pre><code> 블록 전용 이스케이프 — 줄바꿈(\n)을 그대로 유지
+ * @param {string} str
+ * @returns {string}
+ */
+export function escapeCode(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
  * 안전한 JSON 파싱 (Gemini 응답에서 마크다운/불완전 JSON 처리)
  *
  * 1차: 원본 그대로 파싱

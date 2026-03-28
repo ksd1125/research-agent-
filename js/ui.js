@@ -19,7 +19,7 @@ import {
   getPaperContext,
   getPaperText
 } from './pipeline.js';
-import { escapeHtml, copyToClipboard } from './utils.js';
+import { escapeHtml, escapeCode, copyToClipboard } from './utils.js';
 import { initPyodide, runPython, isPyodideReady } from './pyodide-runner.js';
 import {
   renderApaTable,
@@ -524,7 +524,7 @@ function renderStepCard(step, stepIdx, methodIndex) {
   html += `<div class="step-code-section">`;
   html += `<button class="code-toggle" data-step-idx="${stepIdx}">💻 코드 보기</button>`;
   html += `<pre class="code-block" data-step-idx="${stepIdx}" style="display:none;">`;
-  html += `<code>${escapeHtml(code)}</code>`;
+  html += `<code>${escapeCode(code)}</code>`;
   html += `</pre>`;
   html += `</div>`;
 
