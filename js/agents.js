@@ -39,10 +39,19 @@ export function abortPipeline() {
  * @param {number} [maxTokens=4000]
  * @returns {Promise<string>} — 응답 텍스트
  */
-export async function callGemini(apiKey, prompt, maxTokens = 4000) {
+export async function callGemini(apiKey, prompt, maxTokens = 4000, { jsonMode = false } = {}) {
   if (!apiKey) throw new Error(MESSAGES.errors.noApiKey);
 
   const url = `${API.baseUrl}/${API.defaultModel}:generateContent?key=${apiKey}`;
+
+  const generationConfig = {
+    temperature: API.defaultTemp,
+    maxOutputTokens: maxTokens,
+  };
+  // JSON 강제 모드: Gemini가 반드시 유효한 JSON만 출력하도록 강제
+  if (jsonMode) {
+    generationConfig.responseMimeType = 'application/json';
+  }
 
   let response;
   try {
@@ -51,10 +60,7 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: API.defaultTemp,
-          maxOutputTokens: maxTokens,
-        },
+        generationConfig,
       }),
       signal: _abortController?.signal,
     });
@@ -339,7 +345,7 @@ ${paperText}
  */
 export async function runAgent1(apiKey, paperText) {
   const prompt = buildAgent1Prompt(paperText);
-  const raw = await callGemini(apiKey, prompt, API.tokens.agent1);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent1, { jsonMode: true });
 
   try {
     return safeParseJSON(raw);
@@ -1084,7 +1090,7 @@ role 분류 가이드 (반드시 아래 기준으로 분류):
  */
 export async function runAgent4Plus(apiKey, paperText, paperContext, detectedMethods) {
   const prompt = buildAgent4PlusPrompt(paperText, paperContext, detectedMethods);
-  const raw = await callGemini(apiKey, prompt, API.tokens.agent4Plus || 4000);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent4Plus || 8000, { jsonMode: true });
 
   try {
     const result = safeParseJSON(raw);

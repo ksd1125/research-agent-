@@ -19,7 +19,7 @@ export const API = {
     agent2: 2000,
     agent3Meta: 500,
     agent3Code: 18000,   // 4-Phase(원천→전처리→분석→시각화) 코드 생성을 위해 증가
-    agent4Plus: 4000,    // v5: 데이터 구조 + 기술통계 + 변수 테이블 통합
+    agent4Plus: 8000,    // v5: 데이터 구조 + 기술통계 + 변수 테이블 통합 (4000→8000: 변수 10~15개 JSON 완성을 위해 증가)
     qna: 2000,
     interpretation: 8000, // Peer Reviewer 3파트 구조를 위해 증가
     review: 16000,       // v5: 리뷰 & 대안 방법론 3파트 (8000→16000: 3섹션 모두 생성되도록 증가)
