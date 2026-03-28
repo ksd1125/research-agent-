@@ -1137,7 +1137,8 @@ ${keyVars.outcome ? `[종속변수]: ${keyVars.outcome}` : ''}
 ${keyVars.treatment ? `[핵심 독립변수]: ${keyVars.treatment}` : ''}
 ${keyVars.controls ? `[통제변수]: ${keyVars.controls}` : ''}
 
-반드시 아래 구분자 형식으로 출력하세요. 각 섹션을 빠짐없이 포함하세요.
+반드시 아래 구분자 형식으로 출력하세요. 3개 섹션(PEER_REVIEW, ALTERNATIVES, FUTURE_RESEARCH)을 모두 빠짐없이 포함하세요.
+각 섹션은 간결하게 핵심만 작성하되, 3개 섹션이 모두 포함되는 것이 가장 중요합니다.
 
 ===PEER_REVIEW===
 ## 동료 리뷰 (Peer Review)
