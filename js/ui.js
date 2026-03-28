@@ -328,15 +328,21 @@ function renderVariableTable(variables) {
   variables.forEach(v => {
     const est = v._estimated ? ' title="추정값 (논문에서 추출 불가)"' : '';
     const estStyle = v._estimated ? ' style="color: #7f8c8d; font-style: italic;"' : '';
+    const isCategorical = (v.type === '범주' || v.type === '이진') && v.categories;
     html += '<tr>';
     html += `<td>${escapeHtml(v.name_kr || '')}</td>`;
     html += `<td><code>${escapeHtml(v.name_en || '')}</code></td>`;
     html += `<td><span class="role-badge role-${(v.role || '').replace(/\s/g, '')}">${escapeHtml(v.role || '')}</span></td>`;
     html += `<td>${escapeHtml(v.type || '')}</td>`;
-    html += `<td${est}${estStyle}>${v.mean != null ? escapeHtml(String(v.mean)) + (v._estimated ? '~' : '') : '—'}</td>`;
-    html += `<td${est}${estStyle}>${v.sd != null ? escapeHtml(String(v.sd)) + (v._estimated ? '~' : '') : '—'}</td>`;
-    html += `<td${est}${estStyle}>${v.min != null ? escapeHtml(String(v.min)) + (v._estimated ? '~' : '') : '—'}</td>`;
-    html += `<td${est}${estStyle}>${v.max != null ? escapeHtml(String(v.max)) + (v._estimated ? '~' : '') : '—'}</td>`;
+    if (isCategorical) {
+      // 범주형: mean/sd 대신 카테고리 목록 표시 (4열 병합)
+      html += `<td colspan="4" style="font-size:0.85em; color:#2c3e50;">${escapeHtml(String(v.categories))}</td>`;
+    } else {
+      html += `<td${est}${estStyle}>${v.mean != null ? escapeHtml(String(v.mean)) + (v._estimated ? '~' : '') : '—'}</td>`;
+      html += `<td${est}${estStyle}>${v.sd != null ? escapeHtml(String(v.sd)) + (v._estimated ? '~' : '') : '—'}</td>`;
+      html += `<td${est}${estStyle}>${v.min != null ? escapeHtml(String(v.min)) + (v._estimated ? '~' : '') : '—'}</td>`;
+      html += `<td${est}${estStyle}>${v.max != null ? escapeHtml(String(v.max)) + (v._estimated ? '~' : '') : '—'}</td>`;
+    }
     html += '</tr>';
   });
 

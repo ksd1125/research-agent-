@@ -317,8 +317,17 @@ export function generateMockData(stats, n = 500) {
       const t = (type || 'continuous').toLowerCase();
       if (t === 'binary') {
         row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
-      } else if (t === 'categorical' && levels && levels.length > 0) {
-        row[name_en] = levels[Math.floor(Math.random() * levels.length)];
+      } else if (t === 'categorical' || t === '범주') {
+        // categories 필드 또는 levels 필드에서 카테고리 목록 사용
+        const cats = v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
+                   : (levels && levels.length > 0) ? levels
+                   : null;
+        if (cats && cats.length > 0) {
+          row[name_en] = cats[Math.floor(Math.random() * cats.length)];
+        } else {
+          // 카테고리 목록 없으면 숫자 인덱스
+          row[name_en] = Math.floor(Math.random() * ((max || 4) - (min || 1) + 1)) + (min || 1);
+        }
       } else if (t === 'ordinal' || (Number.isInteger(min) && Number.isInteger(max) && max - min <= 10)) {
         let val = normalRandom(mean || 3, sd || 1);
         val = Math.round(val);
