@@ -22,7 +22,6 @@ import {
   runQnA,
   createAbortController,
   abortPipeline,
-  getAnalysisProfile,
 } from './agents.js';
 import { getExtractedText, getPdfBase64 } from './pdf.js';
 import { convertPdfToMarkdown } from './mockdata.js';
@@ -45,7 +44,8 @@ const state = {
   statResults: {},         // Agent 2 결과 캐시: { methodIndex: statResult }
   steps: {},               // Step 목록 캐시: { methodIndex: stepsArray }
   simulationResults: {},   // 시뮬레이션 결과 캐시: { 'methodIdx-stepId': result }
-  reviewResult: null,      // Agent 6+ 결과 (peer, alternatives, future)
+  reviewResult: null,      // Agent 6+ 결과 (레거시, 단일 캐시)
+  reviewResults: {},       // Agent 6+ 결과 캐시: { methodIndex: result }
   selectedMethod: 0,       // 현재 선택된 방법론 인덱스
   selectedSections: [],    // 선택된 분석 대상 섹션
 };

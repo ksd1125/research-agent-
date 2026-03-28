@@ -1200,13 +1200,16 @@ ${keyVars.controls ? `[통제변수]: ${keyVars.controls}` : ''}
 
   const raw = await callGemini(apiKey, prompt, API.tokens.review || 8000);
 
-  // 3파트 파싱
-  const peerMatch = raw.match(/===PEER_REVIEW===([\s\S]*?)===END_PEER_REVIEW===/);
-  const altMatch = raw.match(/===ALTERNATIVES===([\s\S]*?)===END_ALTERNATIVES===/);
-  const futureMatch = raw.match(/===FUTURE_RESEARCH===([\s\S]*?)===END_FUTURE_RESEARCH===/);
+  // 3파트 파싱 (end marker 누락 시 다음 섹션 시작을 경계로 사용)
+  const peerMatch = raw.match(/===PEER_REVIEW===([\s\S]*?)(?:===END_PEER_REVIEW===|===ALTERNATIVES===)/);
+  const altMatch = raw.match(/===ALTERNATIVES===([\s\S]*?)(?:===END_ALTERNATIVES===|===FUTURE_RESEARCH===)/);
+  const futureMatch = raw.match(/===FUTURE_RESEARCH===([\s\S]*?)(?:===END_FUTURE_RESEARCH===|$)/);
+
+  // fallback: end marker도 다음 섹션도 없으면 원본에서 섹션 구분자 제거 후 반환
+  const cleanRaw = raw.replace(/===\w+===/g, '').trim();
 
   return {
-    peer: peerMatch ? peerMatch[1].trim() : raw.trim(),
+    peer: peerMatch ? peerMatch[1].trim() : cleanRaw,
     alternatives: altMatch ? altMatch[1].trim() : '',
     future: futureMatch ? futureMatch[1].trim() : '',
   };

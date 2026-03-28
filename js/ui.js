@@ -1271,40 +1271,92 @@ function renderDataPreview(data, variables) {
 }
 
 /* ============================================================================
-   Markdown to HTML 변환 (간단한 구현)
+   Markdown to HTML 변환
    ============================================================================ */
 
 function markdownToHtml(markdown) {
   if (!markdown) return '';
 
-  let html = escapeHtml(markdown);
+  // HTML 특수문자 이스케이프 (줄바꿈은 보존 — 마크다운 패턴 매칭에 필수)
+  let html = String(markdown)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 
-  // 헤더 (# -> <h3>, ## -> <h4>, etc.)
-  html = html.replace(/^### (.*?)$/gm, '<h4>$1</h4>');
-  html = html.replace(/^## (.*?)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^# (.*?)$/gm, '<h2>$1</h2>');
+  // 섹션 구분자 제거 (===PEER_REVIEW===, ===END_PEER_REVIEW=== 등)
+  html = html.replace(/^===\w+===\s*$/gm, '');
 
-  // 굵은 글씨 (**text** -> <strong>text</strong>)
+  // 코드 블록 (```lang ... ``` → <pre><code>...</code></pre>)
+  html = html.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
+    return '\n<pre><code>' + code.trim() + '</code></pre>\n';
+  });
+
+  // 인라인 코드 (`code` → <code>code</code>)
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // 헤더 (#### → h5, ### → h4, ## → h3, # → h2)
+  html = html.replace(/^####\s+(.*?)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^###\s+(.*?)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^##\s+(.*?)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^#\s+(.*?)$/gm, '<h2>$1</h2>');
+
+  // 굵은 글씨 (**text** → <strong>)
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 
-  // 기울임 (*text* -> <em>text</em>)
-  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // 기울임 (*text* → <em>, ** 내부가 아닌 경우만)
+  html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
 
-  // 코드 블록 (```code``` -> <pre><code>code</code></pre>)
-  html = html.replace(/```(.*?)```/gs, '<pre><code>$1</code></pre>');
+  // 수평선 (---, ***)
+  html = html.replace(/^[-*]{3,}\s*$/gm, '<hr>');
 
-  // 인라인 코드 (`code` -> <code>code</code>)
-  html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+  // 비순서 리스트 (연속된 - 또는 * 항목을 <ul>로 묶기)
+  html = html.replace(/(^[-*]\s+.+(\n|$))+/gm, (block) => {
+    const items = block.trim().split('\n').map(line => {
+      const content = line.replace(/^[-*]\s+/, '');
+      return '<li>' + content + '</li>';
+    }).join('\n');
+    return '<ul>\n' + items + '\n</ul>\n';
+  });
 
-  // 리스트 (- item -> <li>item</li>)
-  html = html.replace(/^- (.*?)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*?<\/li>)/s, '<ul>$1</ul>');
+  // 순서 리스트 (연속된 1. 2. 항목을 <ol>로 묶기)
+  html = html.replace(/(^\d+\.\s+.+(\n|$))+/gm, (block) => {
+    const items = block.trim().split('\n').map(line => {
+      const content = line.replace(/^\d+\.\s+/, '');
+      return '<li>' + content + '</li>';
+    }).join('\n');
+    return '<ol>\n' + items + '\n</ol>\n';
+  });
 
-  // 순서 리스트 (1. item -> <li>item</li>)
-  html = html.replace(/^\d+\. (.*?)$/gm, '<li>$1</li>');
-
-  // 줄바꿈
+  // 빈 줄 → 문단 구분, 나머지 줄바꿈 → <br>
+  html = html.replace(/\n{2,}/g, '</p><p>');
   html = html.replace(/\n/g, '<br>');
+  html = '<p>' + html + '</p>';
+
+  // 블록 요소 주변의 불필요한 <p>, <br> 정리
+  const blocks = 'h[2-5]|ul|ol|pre|hr';
+  html = html.replace(new RegExp(`<p>(<br>)*\\s*(<(?:${blocks})[>\\s])`, 'g'), '$2');
+  html = html.replace(new RegExp(`(</(?:${blocks})>)(<br>)*\\s*</p>`, 'g'), '$1');
+  html = html.replace(/<p>\s*<\/p>/g, '');
+  html = html.replace(/<p>(<br>)+/g, '<p>');
+  html = html.replace(/(<br>)+<\/p>/g, '</p>');
+
+  // <ul>, <ol>, <pre> 내부 불필요한 <br> 제거
+  html = html.replace(/<ul>(<br>)*/g, '<ul>');
+  html = html.replace(/(<br>)*<\/ul>/g, '</ul>');
+  html = html.replace(/<ol>(<br>)*/g, '<ol>');
+  html = html.replace(/(<br>)*<\/ol>/g, '</ol>');
+  html = html.replace(/<\/li>(<br>)*<li>/g, '</li><li>');
+  html = html.replace(/<\/h([2-5])>(<br>)*/g, '</h$1>');
+  html = html.replace(/(<br>)*<h([2-5])/g, '<h$2');
+
+  // <pre> 내부 <br> → 실제 줄바꿈으로 복원
+  html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (_, code) => {
+    return '<pre><code>' + code.replace(/<br>/g, '\n') + '</code></pre>';
+  });
+
+  // 연속 <br> 정리
+  html = html.replace(/(<br>\s*){3,}/g, '<br><br>');
 
   return html;
 }
