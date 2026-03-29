@@ -34,17 +34,27 @@ import numpy as np
 # 데이터 로드
 df = pd.read_csv('mock_data.csv')
 
-# 기술통계
-print("=== 기술통계 ===")
-print(df.describe().round(3))
+# 수치형 변수만 선택하여 기술통계
+numeric_df = df.select_dtypes(include='number')
+print("=== 기술통계 (수치형 변수) ===")
+print(numeric_df.describe().round(3))
+
+# 범주형 변수 분포 확인
+cat_cols = df.select_dtypes(exclude='number').columns.tolist()
+if cat_cols:
+    print("\\n=== 범주형 변수 분포 ===")
+    for col in cat_cols:
+        print(f"\\n[{col}]")
+        print(df[col].value_counts())
 
 # 변수별 결측치 확인
 print("\\n=== 결측치 ===")
 print(df.isnull().sum())
 
-# 상관행렬 (주요 변수)
-print("\\n=== 상관행렬 ===")
-print(df.corr().round(3))`,
+# 상관행렬 (수치형만)
+if len(numeric_df.columns) > 1:
+    print("\\n=== 상관행렬 ===")
+    print(numeric_df.corr().round(3))`,
         r: `library(dplyr)
 
 # 데이터 로드
@@ -56,7 +66,7 @@ summary(df)
 # 결측치 확인
 sapply(df, function(x) sum(is.na(x)))
 
-# 상관행렬
+# 상관행렬 (수치형만)
 cor(df[sapply(df, is.numeric)], use="complete.obs") |> round(3)`
       }
     }
@@ -144,7 +154,8 @@ import pandas as pd
 df = pd.read_csv('mock_data.csv').dropna()
 
 # 모형 2: 통제변수 포함
-control_cols = [c for c in df.columns if c not in ['${outcome}', '${treatment}']]
+numeric_cols = df.select_dtypes(include='number').columns.tolist()
+control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}']]
 X2 = sm.add_constant(df[['${treatment}'] + control_cols[:5]])
 model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
 print("=== Model 2: 통제변수 포함 ===")
@@ -168,7 +179,8 @@ import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = sm.add_constant(df.drop(columns=['${outcome}']))
+numeric_df = df.select_dtypes(include='number')
+X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
 model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
 
 # 계수 Forest Plot
@@ -212,29 +224,42 @@ import numpy as np
 df = pd.read_csv('mock_data.csv')
 
 # 패널 구조 확인
-print(f"개체 수: {df['entity_id'].nunique()}")
-print(f"시간 범위: {df['year'].min()} ~ {df['year'].max()}")
+if 'entity_id' in df.columns:
+    print(f"개체 수: {df['entity_id'].nunique()}")
+if 'year' in df.columns:
+    print(f"시간 범위: {df['year'].min()} ~ {df['year'].max()}")
 print(f"총 관측치: {len(df)}")
 
-# 처리군/통제군 분포
-print(f"\\n처리군 비율: {df['treatment'].mean():.2%}")
+# 수치형 변수만 기술통계
+numeric_df = df.select_dtypes(include='number')
+print("\\n=== 수치형 변수 기술통계 ===")
+print(numeric_df.describe().round(3))
 
-# 시간별 처리율 변화
-print("\\n=== 연도별 처리율 ===")
-print(df.groupby('year')['treatment'].mean().round(3))`,
+# 처리변수 분포 (있는 경우)
+if '${treatment}' in df.columns:
+    vals = df['${treatment}']
+    if vals.dtype in ['int64','float64']:
+        print(f"\\n처리변수(${treatment}) 평균: {vals.mean():.4f}")
+
+# 연도별 종속변수 평균
+if 'year' in df.columns and '${outcome}' in df.columns:
+    print("\\n=== 연도별 ${outcome} 평균 ===")
+    print(df.groupby('year')['${outcome}'].mean().round(3))`,
           r: `library(dplyr)
 df <- read.csv('mock_data.csv')
 
 # 패널 구조 확인
-cat("개체 수:", n_distinct(df$entity_id), "\\n")
-cat("시간 범위:", min(df$year), "~", max(df$year), "\\n")
+if ("entity_id" %in% names(df)) cat("개체 수:", n_distinct(df$entity_id), "\\n")
+if ("year" %in% names(df)) cat("시간 범위:", min(df$year), "~", max(df$year), "\\n")
 cat("총 관측치:", nrow(df), "\\n")
 
-# 처리군 비율
-cat("처리군 비율:", mean(df$treatment), "\\n")
+# 수치형 변수 기술통계
+summary(df[sapply(df, is.numeric)])
 
-# 연도별 처리율
-df |> group_by(year) |> summarise(treatment_rate = mean(treatment))`
+# 연도별 종속변수 평균
+if ("year" %in% names(df)) {
+  df |> group_by(year) |> summarise(mean_outcome = mean(${outcome}, na.rm=TRUE))
+}`
         }
       },
       {
@@ -280,8 +305,9 @@ df = pd.read_csv('mock_data.csv')
 entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
 time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
 
-# 통제변수 선택 (entity_id, year 제외)
-control_cols = [c for c in df.columns if c not in ['${outcome}', '${treatment}', 'entity_id', 'year']]
+# 통제변수 선택 (수치형만, 식별자 제외)
+numeric_cols = df.select_dtypes(include='number').columns.tolist()
+control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}', 'entity_id', 'year']]
 
 # 모형 2: FE + 통제변수
 X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1)
@@ -345,37 +371,51 @@ phtest(fe, re)`
 import pandas as pd
 import numpy as np
 
-# Event-study style plot
-# 처리 전후 시점별 처리효과 시각화
 df = pd.read_csv('mock_data.csv')
 
-# 시간별 평균 비교 (처리군 vs 통제군)
-treated = df[df['treatment']==1].groupby('year')['${outcome}'].mean()
-control = df[df['treatment']==0].groupby('year')['${outcome}'].mean()
+# Event-study style plot: 연도별 종속변수 추이
+if 'year' in df.columns and '${treatment}' in df.columns:
+    treated = df[df['${treatment}']==1].groupby('year')['${outcome}'].mean()
+    control = df[df['${treatment}']==0].groupby('year')['${outcome}'].mean()
 
-fig, ax = plt.subplots(figsize=(8, 5))
-ax.plot(treated.index, treated.values, 'o-', label='처리군', color='#D32F2F')
-ax.plot(control.index, control.values, 's--', label='통제군', color='#185FA5')
-ax.set_xlabel('연도')
-ax.set_ylabel('${outcome} 평균')
-ax.set_title('처리군 vs 통제군 추이 비교')
-ax.legend()
-plt.tight_layout()
-plt.show()`,
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(treated.index, treated.values, 'o-', label='처리군', color='#D32F2F')
+    ax.plot(control.index, control.values, 's--', label='통제군', color='#185FA5')
+    ax.set_xlabel('연도')
+    ax.set_ylabel('${outcome} 평균')
+    ax.set_title('처리군 vs 통제군 추이 비교')
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+elif 'year' in df.columns:
+    yearly = df.groupby('year')['${outcome}'].mean()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(yearly.index, yearly.values, 'o-', color='#185FA5')
+    ax.set_xlabel('연도')
+    ax.set_ylabel('${outcome} 평균')
+    ax.set_title('연도별 ${outcome} 추이')
+    plt.tight_layout()
+    plt.show()`,
           r: `library(ggplot2)
 library(dplyr)
 df <- read.csv('mock_data.csv')
 
-# 처리군/통제군 연도별 평균 비교
-trends <- df |>
-  group_by(year, treatment) |>
-  summarise(mean_y = mean(${outcome}), .groups="drop") |>
-  mutate(group = ifelse(treatment==1, "처리군", "통제군"))
+# 연도별 종속변수 추이
+if ("year" %in% names(df) & "${treatment}" %in% names(df)) {
+  trends <- df |>
+    group_by(year, ${treatment}) |>
+    summarise(mean_y = mean(${outcome}), .groups="drop") |>
+    mutate(group = ifelse(${treatment}==1, "처리군", "통제군"))
 
-ggplot(trends, aes(x=year, y=mean_y, color=group, linetype=group)) +
-  geom_line(size=1) + geom_point(size=2) +
-  labs(title="처리군 vs 통제군 추이 비교", x="연도", y="${outcome} 평균") +
-  theme_minimal() + scale_color_manual(values=c("통제군"="#185FA5","처리군"="#D32F2F"))`
+  ggplot(trends, aes(x=year, y=mean_y, color=group)) +
+    geom_line(size=1) + geom_point(size=2) +
+    labs(title="처리군 vs 통제군 추이 비교", x="연도", y="${outcome}") +
+    theme_minimal()
+} else if ("year" %in% names(df)) {
+  df |> group_by(year) |> summarise(mean_y = mean(${outcome})) |>
+    ggplot(aes(x=year, y=mean_y)) + geom_line() + geom_point() +
+    labs(title="연도별 ${outcome} 추이") + theme_minimal()
+}`
         }
       }
     ],
@@ -1939,7 +1979,8 @@ summary(model)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = sm.add_constant(df.drop(columns=['${outcome}']))
+numeric_df = df.select_dtypes(include='number')
+X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
 model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
 print(model.summary())`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()

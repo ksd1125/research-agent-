@@ -225,7 +225,7 @@ export function renderInitialResult(docResult, dataStructure) {
     // === 자동 데이터 생성: dataStructure가 있으면 바로 500행 생성 ===
     if (dataStructure && dataStructure.variables && dataStructure.variables.length > 0) {
       try {
-        mockDataCache = generateMockData(dataStructure, 500);
+        mockDataCache = generateMockData(dataStructure, 500, ctx.analysis_category || null);
         const statusEl = $('mockdata-status');
         if (statusEl) {
           statusEl.innerHTML = `<p style="color: #27ae60;">✅ 데이터 자동 생성 완료 (${mockDataCache.data.length}행 × ${mockDataCache.variables.length}변수)</p>`;
@@ -701,7 +701,8 @@ async function executePythonStep(code, stepIdx) {
       const ds = getDataStructure();
       if (ds && ds.variables && ds.variables.length > 0) {
         try {
-          mockDataCache = generateMockData(ds, 500);
+          const pc = getPaperContext();
+          mockDataCache = generateMockData(ds, 500, pc?.analysis_category || null);
           csvData = mockDataCache.csv;
           const statusEl = $('mockdata-status');
           if (statusEl) statusEl.innerHTML = `<p style="color: #27ae60;">✅ 실습용 데이터 자동 생성 (${mockDataCache.data.length}행 × ${mockDataCache.variables.length}변수)</p>`;
@@ -1108,7 +1109,8 @@ function setupMockDataGeneration() {
         if (mockDataStatus) mockDataStatus.innerHTML = '<div class="loading-text">데이터 생성 중...</div>';
 
         const dataStructure = getDataStructure();
-        mockDataCache = generateMockData(dataStructure);
+        const pc = getPaperContext();
+        mockDataCache = generateMockData(dataStructure, 500, pc?.analysis_category || null);
         // mockDataCache = { csv, data, variables }
 
         if (mockDataStatus) {

@@ -266,12 +266,90 @@ function estimateVariableStats(v) {
  * @param {number} [n=500] — 생성할 관측치 수 (기본 500행)
  * @returns {{ csv: string, data: Array<Object>, variables: Array }}
  */
-export function generateMockData(stats, n = 500) {
+export function generateMockData(stats, n = 500, category = null) {
   const sampleSize = n || 500;
   const variables = stats.variables || [];
 
   if (variables.length === 0) {
     throw new Error('변수 정보가 없습니다. 논문 분석을 먼저 진행해주세요.');
+  }
+
+  // 패널 데이터 카테고리일 때 entity_id/year 자동 추가 (이슈 19)
+  const isPanelCategory = category === 'causal_inference' || category === 'panel';
+  const hasEntityId = variables.some(v => v.name_en === 'entity_id' || v.name_en === 'firm_id');
+  const hasYear = variables.some(v => v.name_en === 'year');
+
+  if (isPanelCategory && (!hasEntityId || !hasYear)) {
+    const numEntities = 250;
+    const years = [2015, 2016, 2017, 2018, 2019];
+    const panelN = numEntities * years.length; // 1250 rows
+
+    // enrichedVars 생성 (패널 식별자 제외)
+    const enrichedVars = variables.map(v => {
+      const enriched = { ...v };
+      const hasMean = (v.mean != null && v.mean !== '' && !isNaN(v.mean));
+      const hasSd   = (v.sd != null && v.sd !== '' && !isNaN(v.sd));
+      const hasMin  = (v.min != null && v.min !== '' && !isNaN(v.min));
+      const hasMax  = (v.max != null && v.max !== '' && !isNaN(v.max));
+      const type = (v.type || 'continuous').toLowerCase();
+      if (!hasMean || !hasSd) {
+        const est = estimateVariableStats(v);
+        if (!hasMean) enriched.mean = est.mean;
+        if (!hasSd) enriched.sd = est.sd;
+        if (!hasMin) enriched.min = est.min;
+        if (!hasMax) enriched.max = est.max;
+        enriched._estimated = true;
+      } else {
+        if (!hasMin) enriched.min = Math.round((enriched.mean - 3 * enriched.sd) * 100) / 100;
+        if (!hasMax) enriched.max = Math.round((enriched.mean + 3 * enriched.sd) * 100) / 100;
+      }
+      return enriched;
+    });
+
+    // 패널 데이터 생성
+    const data = [];
+    for (let e = 1; e <= numEntities; e++) {
+      for (const yr of years) {
+        const row = { entity_id: e, year: yr };
+        for (const v of enrichedVars) {
+          const { name_en, mean, sd, min, max, type, levels } = v;
+          const t = (type || 'continuous').toLowerCase();
+          if (t === 'binary') {
+            row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
+          } else if (t === 'categorical' || t === '범주') {
+            const cats = v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
+                       : (levels && levels.length > 0) ? levels : null;
+            if (cats && cats.length > 0) {
+              row[name_en] = cats[Math.floor(Math.random() * cats.length)];
+            } else {
+              row[name_en] = Math.floor(Math.random() * ((max || 4) - (min || 1) + 1)) + (min || 1);
+            }
+          } else {
+            let val = normalRandom(mean || 30, sd || 15);
+            val = clamp(val, min ?? -Infinity, max ?? Infinity);
+            row[name_en] = Math.round(val * 100) / 100;
+          }
+        }
+        data.push(row);
+      }
+    }
+
+    // 패널 식별자를 enrichedVars 앞에 추가
+    const panelVars = [
+      { name_kr: '개체 ID', name_en: 'entity_id', role: '식별자', type: 'continuous' },
+      { name_kr: '연도', name_en: 'year', role: '시간', type: 'continuous' },
+      ...enrichedVars
+    ];
+    const headers = panelVars.map(v => v.name_en);
+    const csvRows = [headers.join(',')];
+    for (const row of data) {
+      csvRows.push(headers.map(h => {
+        const val = row[h];
+        if (typeof val === 'string' && val.includes(',')) return `"${val}"`;
+        return val ?? '';
+      }).join(','));
+    }
+    return { csv: csvRows.join('\n'), data, variables: panelVars };
   }
 
   // 1단계: 빠진 통계를 추정하여 보완
