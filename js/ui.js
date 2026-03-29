@@ -289,7 +289,7 @@ function renderDataStructureCard(dataStructure) {
       descHtml += `<p>${escapeHtml(dataStructure.data_description)}</p>`;
     }
     if (dataStructure.structure_diagram) {
-      descHtml += `<div class="structure-diagram"><code>${escapeHtml(dataStructure.structure_diagram)}</code></div>`;
+      descHtml += `<div class="structure-diagram"><code>${escapeCode(dataStructure.structure_diagram)}</code></div>`;
     }
     if (dataStructure.sample_info) {
       const si = dataStructure.sample_info;
@@ -603,28 +603,41 @@ async function executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx) {
 
     // 결과 렌더링
     let resultHtml = '<div class="step-execution-result">';
+    let hasContent = false;
 
     if (result.table) {
       resultHtml += '<div class="result-subsection"><h4>📊 결과 테이블</h4>';
       resultHtml += renderResultTable(result.table);
       resultHtml += '</div>';
+      hasContent = true;
     }
 
     if (result.chartDesc) {
       resultHtml += '<div class="result-subsection"><h4>📈 차트 설명</h4>';
       resultHtml += `<p>${escapeHtml(result.chartDesc)}</p>`;
       resultHtml += '</div>';
+      hasContent = true;
     }
 
     if (result.interpretation) {
       resultHtml += '<div class="result-subsection"><h4>🔍 해석</h4>';
       resultHtml += markdownToHtml(result.interpretation);
       resultHtml += '</div>';
+      hasContent = true;
     }
 
     if (result.paperComparison) {
       resultHtml += '<div class="result-subsection"><h4>📄 논문 비교</h4>';
       resultHtml += markdownToHtml(result.paperComparison);
+      resultHtml += '</div>';
+      hasContent = true;
+    }
+
+    // 이슈 15: 모든 섹션이 비어있을 때 fallback 메시지
+    if (!hasContent) {
+      resultHtml += '<div class="result-subsection" style="color: #856404; background: #fff3cd; padding: 12px; border-radius: 6px;">';
+      resultHtml += '<p>AI 시뮬레이션 결과를 생성하지 못했습니다. 다시 시도해주세요.</p>';
+      resultHtml += '<p style="font-size: 0.85em; margin-top: 4px;">원인: API 응답 파싱 실패 또는 빈 응답</p>';
       resultHtml += '</div>';
     }
 

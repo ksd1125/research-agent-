@@ -217,6 +217,9 @@ export async function executeStep(methodIndex, stepId, code, lang) {
     }
   });
 
+  // 이슈 17: Agent4+ 변수 목록을 context에 주입하여 변수명 일관성 확보
+  const variableNames = dataStats.map(v => v.name_en).filter(Boolean);
+
   const context = {
     domain: state.paperContext.domain,
     analysisType: method?.analysis_type,
@@ -224,6 +227,7 @@ export async function executeStep(methodIndex, stepId, code, lang) {
     treatment: keyVars.treatment,
     dataCharacteristics: state.paperContext.data_characteristics,
     descriptiveStats,
+    variableNames,
   };
 
   const result = await simulateExecution(state.apiKey, code, lang, context);

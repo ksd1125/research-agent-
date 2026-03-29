@@ -243,17 +243,20 @@ df |> group_by(year) |> summarise(treatment_rate = mean(treatment))`
         description: '개체 고정효과와 시간 고정효과를 포함한 기본 모형을 추정합니다.',
         codeTemplate: {
           python: `import pandas as pd
-from linearmodels.panel import PanelOLS
+import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
-df = df.set_index(['entity_id', 'year'])
 
-# 모형 1: Entity FE + Time FE
-model1 = PanelOLS(df['${outcome}'], df[['${treatment}']],
-                   entity_effects=True, time_effects=True)
-result1 = model1.fit(cov_type='clustered', cluster_entity=True)
+# Entity & Time 더미변수 생성
+entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
+time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+
+# 모형 1: Entity FE + Time FE (더미변수 방식)
+X = pd.concat([df[['${treatment}']], entity_dummies, time_dummies], axis=1)
+X = sm.add_constant(X)
+model1 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
 print("=== Model 1: 기본 고정효과 모형 ===")
-print(result1)`,
+print(model1.summary().tables[1])`,
           r: `library(fixest)
 df <- read.csv('mock_data.csv')
 
@@ -269,20 +272,23 @@ summary(model1)`
         description: '시간 가변 통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
         codeTemplate: {
           python: `import pandas as pd
-from linearmodels.panel import PanelOLS
+import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
-df = df.set_index(['entity_id', 'year'])
 
-control_cols = [c for c in df.columns if c not in ['${outcome}', '${treatment}']]
+# Entity & Time 더미변수 생성
+entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
+time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+
+# 통제변수 선택 (entity_id, year 제외)
+control_cols = [c for c in df.columns if c not in ['${outcome}', '${treatment}', 'entity_id', 'year']]
 
 # 모형 2: FE + 통제변수
-exog = df[['${treatment}'] + control_cols[:4]]
-model2 = PanelOLS(df['${outcome}'], exog,
-                   entity_effects=True, time_effects=True)
-result2 = model2.fit(cov_type='clustered', cluster_entity=True)
+X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1)
+X = sm.add_constant(X)
+model2 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
 print("=== Model 2: 통제변수 포함 ===")
-print(result2)`,
+print(model2.summary().tables[1])`,
           r: `library(fixest)
 df <- read.csv('mock_data.csv')
 
@@ -299,22 +305,21 @@ summary(model2)`
         codeTemplate: {
           python: `import pandas as pd
 import statsmodels.api as sm
-from linearmodels.panel import PanelOLS, RandomEffects
+from statsmodels.regression.mixed_linear_model import MixedLM
 
 df = pd.read_csv('mock_data.csv')
-df_panel = df.set_index(['entity_id', 'year'])
 
-# 강건성 1: Pooled OLS vs FE 비교
+# 강건성 1: Pooled OLS (고정효과 없이)
 X_pooled = sm.add_constant(df[['${treatment}']])
 pooled = sm.OLS(df['${outcome}'], X_pooled).fit(cov_type='HC1')
 print("=== Pooled OLS ===")
 print(f"계수: {pooled.params['${treatment}']:.4f}, p-value: {pooled.pvalues['${treatment}']:.4f}")
 
-# 강건성 2: Random Effects
-re_model = RandomEffects(df_panel['${outcome}'], df_panel[['${treatment}']])
-re_result = re_model.fit()
-print(f"\\n=== Random Effects ===")
-print(re_result)`,
+# 강건성 2: Random Effects (Mixed Linear Model)
+re_model = MixedLM(df['${outcome}'], df[['${treatment}']], groups=df['entity_id'])
+re_result = re_model.fit(reml=True)
+print(f"\\n=== Random Effects (MixedLM) ===")
+print(re_result.summary().tables[1])`,
           r: `library(fixest)
 library(plm)
 df <- read.csv('mock_data.csv')

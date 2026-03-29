@@ -402,7 +402,7 @@ function buildAgent2Prompt(rawName, evidenceText, paperContext) {
  */
 export async function runAgent2(apiKey, method, paperContext) {
   const prompt = buildAgent2Prompt(method.raw_name, method.evidence_text, paperContext);
-  const raw = await callGemini(apiKey, prompt, API.tokens.agent2);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent2, { jsonMode: true });
 
   try {
     return safeParseJSON(raw);
@@ -442,13 +442,13 @@ export function getAnalysisProfile(category, analysisType, lang) {
       dataHint: '횡단면 데이터를 생성하세요. 종속변수, 독립변수, 통제변수를 포함.',
     },
     causal_inference: {
-      python: 'pandas, numpy, statsmodels, linearmodels, scipy, matplotlib',
+      python: 'pandas, numpy, statsmodels, scipy, matplotlib',
       r: 'fixest, plm, did, dplyr, lmtest, ggplot2',
       dataHint: '패널 데이터(entity-time 구조)를 생성하세요. entity ID, 시간 변수, 처리 여부(treatment indicator)를 포함. 처리 시점이 다른 다기간 설계도 고려.',
     },
     // 하위 호환성: 기존 panel 카테고리를 causal_inference로 매핑
     panel: {
-      python: 'pandas, numpy, statsmodels, linearmodels, scipy, matplotlib',
+      python: 'pandas, numpy, statsmodels, scipy, matplotlib',
       r: 'fixest, plm, did, dplyr, lmtest, ggplot2',
       dataHint: '패널 데이터(entity-time 구조)를 생성하세요. entity ID, 시간 변수, 처리 여부(treatment indicator)를 포함.',
     },
@@ -661,7 +661,8 @@ export async function runAgent3(apiKey, statResult, paperContext, targetLocation
     const metaRaw = await callGemini(
       apiKey,
       buildAgent3MetaPrompt(statResult.standard_name, paperContext),
-      API.tokens.agent3Meta
+      API.tokens.agent3Meta,
+      { jsonMode: true }
     );
     const metaResult = safeParseJSON(metaRaw);
     packages = metaResult.packages || packages;

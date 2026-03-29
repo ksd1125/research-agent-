@@ -26,6 +26,11 @@ export async function simulateExecution(apiKey, code, lang, context) {
 
   const langName = lang === 'python' ? 'Python' : 'R';
 
+  // 이슈 17: 변수 목록을 프롬프트에 포함하여 변수명 일관성 확보
+  const varListText = context.variableNames && context.variableNames.length > 0
+    ? `\n- 사용 변수 목록 (반드시 이 변수명을 사용하세요): ${context.variableNames.join(', ')}`
+    : '';
+
   const prompt = `당신은 ${langName} 데이터 분석 전문가입니다.
 아래 코드를 가상 데이터로 실행했을 때 예상되는 결과를 생성하세요.
 
@@ -40,7 +45,9 @@ ${code}
 - 분석 유형: ${context.analysisType || '미지정'}
 - 종속변수: ${context.outcome || '미지정'}
 - 핵심 독립변수: ${context.treatment || '미지정'}
-- 데이터 특성: ${context.dataCharacteristics || '일반 데이터'}
+- 데이터 특성: ${context.dataCharacteristics || '일반 데이터'}${varListText}
+
+**중요**: 결과 테이블과 해석에서 반드시 위에 명시된 변수명을 그대로 사용하세요. 임의로 변수명을 바꾸지 마세요.
 
 반드시 아래 구분자 형식으로 출력하세요. 각 섹션을 빠짐없이 포함하세요:
 
@@ -75,6 +82,9 @@ ${code}
  * 시뮬레이션 응답 파싱
  */
 function parseSimulationResult(raw) {
+  // 코드펜스 스트리핑 (이슈 16): Gemini가 ```markdown 등으로 감쌀 수 있음
+  const stripped = raw.replace(/```[\w]*\n?([\s\S]*?)```/g, '$1');
+
   const extract = (tag) => {
     const patterns = {
       'RESULT_TABLE': /===RESULT_TABLE===([\s\S]*?)===END_TABLE===/,
@@ -82,7 +92,8 @@ function parseSimulationResult(raw) {
       'INTERPRETATION': /===INTERPRETATION===([\s\S]*?)===END_INTERPRETATION===/,
       'PAPER_COMPARISON': /===PAPER_COMPARISON===([\s\S]*?)===END_COMPARISON===/,
     };
-    const match = raw.match(patterns[tag]);
+    // stripped에서 먼저 시도, 실패하면 raw에서 재시도
+    const match = stripped.match(patterns[tag]) || raw.match(patterns[tag]);
     return match ? match[1].trim() : '';
   };
 
