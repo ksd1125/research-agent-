@@ -9,6 +9,7 @@
 import * as ui from './ui.js';
 import { processPdfFile, extractTextFromPDF, getExtractedText, getPdfBase64, resetExtractedText } from './pdf.js';
 import { runInitialPipeline, resetState } from './pipeline.js';
+import { initPyodide, isPyodideReady } from './pyodide-runner.js';
 
 /** @type {string} 로컬 스토리지 키 */
 const STORAGE_KEY = 'rma_api_key';
@@ -54,6 +55,15 @@ function init() {
       runInitialPipeline(apiKey, selectedSections);
     });
   }
+
+  // ===== Pyodide 사전 로딩 (백그라운드) =====
+  // 페이지 로드 후 5초 뒤 백그라운드에서 Python 환경을 미리 초기화
+  // 사용자가 분석실습 탭에 도달할 때 즉시 실행 가능
+  setTimeout(() => {
+    if (!isPyodideReady()) {
+      initPyodide().catch(err => console.warn('Pyodide 사전 로딩 실패 (분석 시 재시도):', err.message));
+    }
+  }, 5000);
 
   // ===== 새 분석 (결과 화면 → 초기화) =====
   document.addEventListener('click', (e) => {

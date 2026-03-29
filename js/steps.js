@@ -34,8 +34,9 @@ import numpy as np
 # 데이터 로드
 df = pd.read_csv('mock_data.csv')
 
-# 수치형 변수만 선택하여 기술통계
-numeric_df = df.select_dtypes(include='number')
+# 수치형 변수만 선택하여 기술통계 (식별자 제외)
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
 print("=== 기술통계 (수치형 변수) ===")
 print(numeric_df.describe().round(3))
 
@@ -51,7 +52,7 @@ if cat_cols:
 print("\\n=== 결측치 ===")
 print(df.isnull().sum())
 
-# 상관행렬 (수치형만)
+# 상관행렬 (수치형, 식별자 제외)
 if len(numeric_df.columns) > 1:
     print("\\n=== 상관행렬 ===")
     print(numeric_df.corr().round(3))`,
@@ -154,8 +155,9 @@ import pandas as pd
 df = pd.read_csv('mock_data.csv').dropna()
 
 # 모형 2: 통제변수 포함
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 numeric_cols = df.select_dtypes(include='number').columns.tolist()
-control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}']]
+control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols]
 X2 = sm.add_constant(df[['${treatment}'] + control_cols[:5]])
 model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
 print("=== Model 2: 통제변수 포함 ===")
@@ -179,7 +181,8 @@ import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-numeric_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
 X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
 model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
 
@@ -230,8 +233,9 @@ if 'year' in df.columns:
     print(f"시간 범위: {df['year'].min()} ~ {df['year'].max()}")
 print(f"총 관측치: {len(df)}")
 
-# 수치형 변수만 기술통계
-numeric_df = df.select_dtypes(include='number')
+# 수치형 변수만 기술통계 (패널 식별자 제외)
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
 print("\\n=== 수치형 변수 기술통계 ===")
 print(numeric_df.describe().round(3))
 
@@ -253,8 +257,11 @@ if ("entity_id" %in% names(df)) cat("개체 수:", n_distinct(df$entity_id), "\\
 if ("year" %in% names(df)) cat("시간 범위:", min(df$year), "~", max(df$year), "\\n")
 cat("총 관측치:", nrow(df), "\\n")
 
-# 수치형 변수 기술통계
-summary(df[sapply(df, is.numeric)])
+# 수치형 변수 기술통계 (식별자 제외)
+id_cols <- c("entity_id", "year", "time", "id", "ID")
+num_df <- df[sapply(df, is.numeric)]
+num_df <- num_df[, !names(num_df) %in% id_cols, drop=FALSE]
+summary(num_df)
 
 # 연도별 종속변수 평균
 if ("year" %in% names(df)) {
@@ -1979,7 +1986,8 @@ summary(model)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-numeric_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
 X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
 model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
 print(model.summary())`,
