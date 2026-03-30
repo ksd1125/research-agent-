@@ -17,7 +17,8 @@ import {
   getMethods,
   getDataStructure,
   getPaperContext,
-  getPaperText
+  getPaperText,
+  resetState
 } from './pipeline.js';
 import { escapeHtml, escapeCode, copyToClipboard } from './utils.js';
 import { initPyodide, runPython, isPyodideReady } from './pyodide-runner.js';
@@ -213,6 +214,9 @@ export function renderInitialResult(docResult, dataStructure) {
 
     // 홈 링크 핸들러
     setupHomeLink();
+
+    // 프린트 버튼 핸들러
+    setupPrintButton();
 
     // Mock 데이터 생성 핸들러
     setupMockDataGeneration();
@@ -1072,7 +1076,10 @@ function setupHomeLink() {
   const homeLink = document.querySelector('.home-link');
   if (homeLink) {
     homeLink.addEventListener('click', () => {
-      // 상태 초기화 후 showInputView() 호출
+      // pipeline 상태 초기화
+      resetState();
+
+      // UI 상태 초기화
       mockDataCache = null;
       currentMethodIndex = 0;
       currentLanguage = 'python';
@@ -1087,6 +1094,26 @@ function setupHomeLink() {
       showPdfFileName('파일을 선택해주세요');
     });
   }
+}
+
+/* ============================================================================
+   프린트 핸들러
+   ============================================================================ */
+
+function setupPrintButton() {
+  const printBtn = $('print-btn');
+  if (!printBtn) return;
+
+  printBtn.addEventListener('click', () => {
+    // 프린트 전: 모든 탭 패널을 보이게 하여 전체 내용 인쇄
+    const panels = document.querySelectorAll('.result-panel');
+    panels.forEach(p => p.classList.add('print-visible'));
+
+    window.print();
+
+    // 프린트 후: 원래 상태 복원
+    panels.forEach(p => p.classList.remove('print-visible'));
+  });
 }
 
 /* ============================================================================

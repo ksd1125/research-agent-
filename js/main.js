@@ -8,7 +8,7 @@
 
 import * as ui from './ui.js';
 import { processPdfFile, extractTextFromPDF, getExtractedText, getPdfBase64, resetExtractedText } from './pdf.js';
-import { runInitialPipeline, resetState } from './pipeline.js';
+import { runInitialPipeline } from './pipeline.js';
 import { initPyodide, isPyodideReady } from './pyodide-runner.js';
 
 /** @type {string} 로컬 스토리지 키 */
@@ -65,13 +65,6 @@ function init() {
     }
   }, 5000);
 
-  // ===== 새 분석 (결과 화면 → 초기화) =====
-  document.addEventListener('click', (e) => {
-    if (e.target.classList.contains('home-link')) {
-      resetState();
-      location.reload();
-    }
-  });
 }
 
 /**
