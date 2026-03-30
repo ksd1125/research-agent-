@@ -1656,6 +1656,34 @@ pre {
 .home-link:hover { color: var(--color-primary-dark); }
 
 /* ============================================================
+   Result Actions (Home + Print)
+   ============================================================ */
+.result-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+.btn-print {
+  font-size: 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+  transition: var(--transition);
+}
+.btn-print:hover {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ============================================================
    Form Elements
    ============================================================ */
 textarea,
@@ -1947,4 +1975,127 @@ textarea { resize: vertical; line-height: 1.6; min-height: 140px; }
   .loading-steps { gap: 4px; }
   .loading-step-icon { width: 36px; height: 36px; font-size: 16px; }
   .loading-step-text { font-size: 8px; }
+}
+
+/* ============================================================
+   Print Styles
+   ============================================================ */
+@media print {
+  /* 기본 설정 */
+  body {
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+    font-size: 11pt;
+    background: #fff;
+    color: #000;
+  }
+
+  /* 숨길 요소: 헤더, 설정, 입력, 로딩, 버튼류 */
+  .header,
+  .config-card,
+  .input-card,
+  .loading-card,
+  .result-tab-bar,
+  .method-nav,
+  .result-actions,
+  .btn-analyze,
+  .btn-mockdata,
+  .btn-upload-csv,
+  .btn-download,
+  .btn-interpret,
+  .btn-print,
+  .home-link,
+  .code-lang-bar,
+  .qna-input-wrap,
+  #review-generate-btn,
+  #practice-lang-bar {
+    display: none !important;
+  }
+
+  /* 결과 영역 전체 표시 */
+  .result-wrap {
+    display: block !important;
+  }
+
+  /* 모든 탭 패널 표시 (print-visible 클래스 또는 기본) */
+  .result-panel,
+  .result-panel.print-visible {
+    display: block !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 리뷰 서브탭 모두 표시 */
+  .review-section {
+    display: block !important;
+  }
+  .interpret-sub-tabs {
+    display: none !important;
+  }
+
+  /* 패널 윈도우 높이 제한 해제 + 스크롤 제거 */
+  .panel-window {
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none;
+    border: 1px solid #ccc;
+    margin-bottom: 16pt;
+  }
+
+  /* 논문 정보 */
+  .paper-info {
+    margin-bottom: 12pt;
+  }
+  .paper-title {
+    font-size: 14pt;
+    font-weight: bold;
+  }
+
+  /* 각 패널 헤더 */
+  .panel-window-header {
+    background: #f0f0f0 !important;
+    color: #000 !important;
+    border-bottom: 2px solid #333;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* 코드 블록 */
+  pre, code {
+    font-size: 9pt;
+    border: 1px solid #ddd;
+    background: #f9f9f9 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* 테이블 */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 9pt;
+  }
+  th, td {
+    border: 1px solid #999;
+    padding: 4pt 6pt;
+  }
+  th {
+    background: #eee !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* 페이지 나눔 */
+  .panel-window {
+    break-before: page;
+  }
+  .panel-window:first-of-type {
+    break-before: auto;
+  }
+
+  /* 링크 URL 표시 안 함 */
+  a::after { content: none !important; }
 }
