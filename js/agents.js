@@ -37,9 +37,12 @@ export function abortPipeline() {
  * @param {string} apiKey
  * @param {string} prompt  — 텍스트 프롬프트
  * @param {number} [maxTokens=4000]
+ * @param {Object} [opts]
+ * @param {boolean} [opts.jsonMode=false] — responseMimeType: application/json 강제
+ * @param {Object|null} [opts.responseSchema=null] — Gemini responseSchema (JSON Schema 객체)
  * @returns {Promise<string>} — 응답 텍스트
  */
-export async function callGemini(apiKey, prompt, maxTokens = 4000, { jsonMode = false } = {}) {
+export async function callGemini(apiKey, prompt, maxTokens = 4000, { jsonMode = false, responseSchema = null } = {}) {
   if (!apiKey) throw new Error(MESSAGES.errors.noApiKey);
 
   const url = `${API.baseUrl}/${API.defaultModel}:generateContent?key=${apiKey}`;
@@ -49,8 +52,12 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000, { jsonMode = 
     maxOutputTokens: maxTokens,
   };
   // JSON 강제 모드: Gemini가 반드시 유효한 JSON만 출력하도록 강제
-  if (jsonMode) {
+  if (jsonMode || responseSchema) {
     generationConfig.responseMimeType = 'application/json';
+  }
+  // responseSchema: 필드 구조를 JSON Schema로 강제 (필드 누락 방지)
+  if (responseSchema) {
+    generationConfig.responseSchema = responseSchema;
   }
 
   let response;
@@ -93,13 +100,27 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000, { jsonMode = 
  * @param {string} pdfBase64 — PDF 파일의 base64 인코딩 문자열
  * @param {string} prompt    — 텍스트 프롬프트
  * @param {number} [maxTokens=8000]
+ * @param {Object} [opts]
+ * @param {boolean} [opts.jsonMode=false] — JSON 응답 강제
+ * @param {Object|null} [opts.responseSchema=null] — JSON Schema 강제
  * @returns {Promise<string>} — 응답 텍스트
  */
-export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8000) {
+export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8000, { jsonMode = false, responseSchema = null } = {}) {
   if (!apiKey) throw new Error(MESSAGES.errors.noApiKey);
   if (!pdfBase64) throw new Error('PDF 데이터가 없습니다.');
 
   const url = `${API.baseUrl}/${API.defaultModel}:generateContent?key=${apiKey}`;
+
+  const generationConfig = {
+    temperature: API.defaultTemp,
+    maxOutputTokens: maxTokens,
+  };
+  if (jsonMode || responseSchema) {
+    generationConfig.responseMimeType = 'application/json';
+  }
+  if (responseSchema) {
+    generationConfig.responseSchema = responseSchema;
+  }
 
   let response;
   try {
@@ -119,10 +140,7 @@ export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8
             { text: prompt },
           ],
         }],
-        generationConfig: {
-          temperature: API.defaultTemp,
-          maxOutputTokens: maxTokens,
-        },
+        generationConfig,
       }),
       signal: _abortController?.signal,
     });
@@ -283,9 +301,20 @@ const METHODOLOGY_TAXONOMY = `
 12. 위에 해당 없으면 → regression
 `;
 
-function buildAgent1Prompt(paperText) {
-  return `${METHODOLOGY_TAXONOMY}
+/**
+ * Agent 1 프롬프트 생성
+ * @param {string} paperText — 논문 전문
+ * @param {Array} [extractedSections=[]] — pdf.js 폰트 기반 감지 헤딩 (4-A 연동)
+ */
+function buildAgent1Prompt(paperText, extractedSections = []) {
+  // 4-A: pdf.js가 감지한 헤딩 목록을 힌트로 주입
+  const sectionHint = extractedSections.length > 0
+    ? `\n[PDF 폰트 분석으로 감지된 섹션 헤딩 목록 — 이를 참조하여 section_index를 채우세요]:
+${extractedSections.map((s, i) => `  ${i + 1}. "${s.text}" (페이지 ${s.page}, 폰트크기 ${s.fontSize})`).join('\n')}\n`
+    : '';
 
+  return `${METHODOLOGY_TAXONOMY}
+${sectionHint}
 논문 텍스트:
 ${paperText}
 
@@ -298,7 +327,9 @@ ${paperText}
 3. 분류 우선순위 규칙에 따라 analysis_category를 결정
 4. 각 방법론에 대해 구체적 analysis_type을 자유 기술 (예: PSM-DID, 이원 ANOVA, SAR 등)
 
-중요: detected_methods는 가장 핵심적인 방법론 최대 ${API.maxMethods}개만 포함하세요.
+중요:
+- detected_methods는 가장 핵심적인 방법론 최대 ${API.maxMethods}개만 포함하세요.
+- section_index는 반드시 논문의 주요 섹션을 최소 3개 이상 포함하세요 (서론/문헌검토/방법론/결과/결론 등).
 
 출력 형식:
 {
@@ -338,14 +369,81 @@ ${paperText}
 }
 
 /**
+ * Agent 1 responseSchema — section_index, controls 필드 누락 방지
+ * Gemini가 이 스키마를 따르도록 강제하여 필수 필드 보장
+ */
+const AGENT1_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    metadata: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '논문 제목' },
+        summary: { type: 'string', description: '1문장 요약' },
+      },
+      required: ['title', 'summary'],
+    },
+    paper_context: {
+      type: 'object',
+      properties: {
+        domain: { type: 'string' },
+        research_type: { type: 'string' },
+        data_characteristics: { type: 'string' },
+        analysis_category: { type: 'string', enum: ['regression','causal_inference','experimental','spatial','time_series','machine_learning','causal_ml','unstructured_data','bayesian','sem','survival','meta_analysis'] },
+        category_evidence: { type: 'string' },
+      },
+      required: ['domain', 'analysis_category', 'category_evidence'],
+    },
+    section_index: {
+      type: 'array',
+      description: '논문의 주요 섹션 목록. 반드시 1개 이상 포함.',
+      items: {
+        type: 'object',
+        properties: {
+          section: { type: 'string' },
+          summary: { type: 'string' },
+          key_tables: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['section', 'summary'],
+      },
+    },
+    detected_methods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          raw_name: { type: 'string' },
+          evidence_text: { type: 'string' },
+          target_result_location: { type: 'string' },
+          source_section: { type: 'string' },
+          analysis_type: { type: 'string' },
+          key_variables: {
+            type: 'object',
+            properties: {
+              outcome: { type: 'string' },
+              treatment: { type: 'string' },
+              controls: { type: 'string', description: '통제변수, 고정효과, 더미 등을 모두 나열' },
+            },
+            required: ['outcome', 'controls'],
+          },
+        },
+        required: ['raw_name', 'analysis_type', 'key_variables'],
+      },
+    },
+  },
+  required: ['metadata', 'paper_context', 'section_index', 'detected_methods'],
+};
+
+/**
  * Agent 1 실행 — 문서 분석
  * @param {string} apiKey
  * @param {string} paperText
+ * @param {Array} [extractedSections] — pdf.js 헤딩 감지 결과 (4-A 연동)
  * @returns {Promise<Object>}
  */
-export async function runAgent1(apiKey, paperText) {
-  const prompt = buildAgent1Prompt(paperText);
-  const raw = await callGemini(apiKey, prompt, API.tokens.agent1, { jsonMode: true });
+export async function runAgent1(apiKey, paperText, extractedSections = []) {
+  const prompt = buildAgent1Prompt(paperText, extractedSections);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent1, { responseSchema: AGENT1_RESPONSE_SCHEMA });
 
   try {
     return safeParseJSON(raw);

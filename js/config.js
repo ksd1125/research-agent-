@@ -26,7 +26,7 @@ export const API = {
     simulation: 4000,    // v5: Gemini 결과 시뮬레이션
   },
   /** 감지할 최대 방법론 수 */
-  maxMethods: 2,
+  maxMethods: 3,
 };
 
 export const MESSAGES = {

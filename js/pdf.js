@@ -22,12 +22,23 @@ let pdfPageCount = 0;
 /** @type {string|null} 기존 호환: 추출된 텍스트 (텍스트 직접 입력 시 사용) */
 let extractedText = null;
 
+/** @type {File|null} 업로드된 원본 PDF File 객체 (헤딩 감지용) */
+let pdfFile = null;
+
 /**
  * PDF base64 데이터 반환 (Gemini 멀티모달 전송용)
  * @returns {string|null}
  */
 export function getPdfBase64() {
   return pdfBase64;
+}
+
+/**
+ * 업로드된 원본 PDF File 객체 반환 (헤딩 감지 등 pdf.js 직접 처리용)
+ * @returns {File|null}
+ */
+export function getPdfFile() {
+  return pdfFile;
 }
 
 /**
@@ -61,6 +72,7 @@ export function resetExtractedText() {
   pdfBase64 = null;
   pdfPageCount = 0;
   extractedText = null;
+  pdfFile = null;
 }
 
 /**
@@ -91,6 +103,7 @@ export async function processPdfFile(file, onProgress) {
   pdfBase64 = null;
   pdfPageCount = 0;
   extractedText = null;
+  pdfFile = file; // 원본 File 객체 저장 (헤딩 감지용)
 
   onProgress('📄 PDF 파일 읽는 중...');
 
@@ -175,6 +188,85 @@ export async function extractTextFromPDF(file, onProgress) {
   } catch (err) {
     extractedText = null;
     throw new Error(err.message || '텍스트 추출에 실패했습니다. 파일을 확인해주세요.');
+  }
+}
+
+/**
+ * pdf.js 폰트 크기 기반 헤딩 감지 (Sprint 2-A)
+ *
+ * 각 텍스트 아이템의 transform[0] (폰트 크기 스케일) 값을 분석하여
+ * 본문 평균보다 1.2배 이상 큰 텍스트 블록을 헤딩 후보로 분류.
+ * 한국어 논문 헤딩 패턴(로마 숫자 / 아라비아 숫자 / '제N장' 등)도 인식.
+ *
+ * @param {File} file — PDF File 객체
+ * @returns {Promise<Array<{text: string, page: number, fontSize: number}>>}
+ *   감지된 헤딩 배열 (최대 30개, 폰트크기 내림차순)
+ */
+export async function extractHeadingsFromPDF(file) {
+  if (typeof pdfjsLib === 'undefined') return [];
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const totalPages = Math.min(pdf.numPages, 40); // 최대 40페이지까지 분석
+
+    const allItems = [];
+
+    // 한국어/영문 헤딩 패턴 (섹션 번호 포함)
+    const HEADING_PATTERNS = [
+      /^(Ⅰ|Ⅱ|Ⅲ|Ⅳ|Ⅴ|Ⅵ|Ⅶ|Ⅷ|Ⅸ|Ⅹ)[.\s]/,  // 로마자 서수
+      /^[1-9][.\s]\s*[가-힣A-Z]/,             // 1. 서론 / 1. Introduction
+      /^제\s*[0-9]+\s*[장절항]/,              // 제1장, 제2절
+      /^(Abstract|Introduction|Background|Methods?|Results?|Discussion|Conclusion|References)/i,
+      /^(초록|서론|연구\s*방법|이론적\s*배경|문헌\s*검토|결과|논의|결론|참고\s*문헌)/,
+    ];
+
+    for (let p = 1; p <= totalPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+
+      for (const item of content.items) {
+        if (!item.str || item.str.trim().length < 2) continue;
+        // transform[0] = 폰트 x-방향 스케일 (폰트 크기에 비례)
+        const fontSize = Math.abs(item.transform[0]);
+        allItems.push({
+          text: item.str.trim(),
+          page: p,
+          fontSize,
+        });
+      }
+    }
+
+    if (allItems.length === 0) return [];
+
+    // 본문 폰트 크기 중앙값 계산
+    const sizes = allItems.map(i => i.fontSize).sort((a, b) => a - b);
+    const median = sizes[Math.floor(sizes.length / 2)];
+    const threshold = median * 1.2; // 중앙값 1.2배 이상 = 헤딩 후보
+
+    const headings = allItems.filter(item => {
+      const bigFont = item.fontSize >= threshold;
+      const patternMatch = HEADING_PATTERNS.some(p => p.test(item.text));
+      const reasonableLength = item.text.length >= 3 && item.text.length <= 80;
+      return (bigFont || patternMatch) && reasonableLength;
+    });
+
+    // 중복 제거 + 최대 30개
+    const seen = new Set();
+    const unique = headings.filter(h => {
+      const key = h.text.slice(0, 20);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // 폰트 크기 내림차순 정렬 후 반환
+    return unique
+      .sort((a, b) => b.fontSize - a.fontSize)
+      .slice(0, 30)
+      .map(h => ({ text: h.text, page: h.page, fontSize: Math.round(h.fontSize * 10) / 10 }));
+  } catch {
+    return [];
   }
 }
 

@@ -12,7 +12,7 @@
  * [온디맨드] 탭 4 Q&A → Agent 5 (Q&A)
  */
 
-import { MESSAGES } from './config.js';
+import { MESSAGES, API } from './config.js';
 import { escapeHtml } from './utils.js';
 import {
   runAgent1,
@@ -23,7 +23,7 @@ import {
   createAbortController,
   abortPipeline,
 } from './agents.js';
-import { getExtractedText, getPdfBase64 } from './pdf.js';
+import { getExtractedText, getPdfBase64, getPdfFile, extractHeadingsFromPDF } from './pdf.js';
 import { convertPdfToMarkdown } from './mockdata.js';
 import { getStepsForCategory } from './steps.js';
 import { simulateExecution, simulateAlternativeMethod } from './simulator.js';
@@ -110,10 +110,22 @@ export async function runInitialPipeline(apiKey, selectedSections) {
     ui.updateLoadingStep(1, 'running');
     ui.setLoadingMessage('논문의 학문 분야와 연구 방법론을 분석 중...');
 
-    const docResult = await runAgent1(apiKey, inputText);
+    // pdf.js 폰트 기반 헤딩 감지 (Sprint 2-A): Agent1 섹션 힌트 주입용
+    let extractedSections = [];
+    const currentPdfFile = getPdfFile();
+    if (currentPdfFile) {
+      try {
+        extractedSections = await extractHeadingsFromPDF(currentPdfFile);
+        console.log(`[pdf.js 헤딩 감지] ${extractedSections.length}개 섹션 감지:`, extractedSections.map(s => s.text));
+      } catch (headingErr) {
+        console.warn('[pdf.js 헤딩 감지] 실패, 건너뜀:', headingErr.message);
+      }
+    }
+
+    const docResult = await runAgent1(apiKey, inputText, extractedSections);
     state.docResult = docResult;
     state.paperContext = docResult.paper_context || {};
-    state.methods = (docResult.detected_methods || []).slice(0, 2);
+    state.methods = (docResult.detected_methods || []).slice(0, API.maxMethods);
 
     ui.updateLoadingStep(1, 'done');
 
