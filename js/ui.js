@@ -809,12 +809,17 @@ async function generateAndRenderApaReport(stepIdx, stdout, images) {
     const paperContext = getPaperContext();
     const currentMethod = methods[currentMethodIndex] || {};
 
+    const design = currentMethod.analysis_design || {};
     const context = {
       stepTitle: document.querySelector(`.step-card[data-step-idx="${stepIdx}"] .step-title`)?.textContent || '',
+      stepDescription: document.querySelector(`.step-card[data-step-idx="${stepIdx}"] .step-description`)?.textContent || '',
       analysisType: currentMethod.analysis_type || '',
       domain: paperContext?.domain || '',
       outcome: currentMethod.key_variables?.outcome || '',
       treatment: currentMethod.key_variables?.treatment || '',
+      framework: design.framework || 'none',
+      mediator: design.mediator || '',
+      moderator: design.moderator || '',
     };
 
     const apa = await generateApaReport(apiKey, stdout, context);

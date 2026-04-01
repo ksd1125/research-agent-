@@ -197,6 +197,37 @@ function formatApaCell(value) {
  * @returns {Promise<{ text: string, tableCaption: string, figureCaption: string }>}
  */
 export async function generateApaReport(apiKey, stdout, context) {
+  // 분석 프레임워크에 따른 보고 가이드 결정
+  const framework = context.framework || 'none';
+  let reportGuide = '';
+
+  if (framework === 'mediation' || framework === 'PROCESS' || framework === 'moderated_mediation') {
+    reportGuide = `
+이 분석은 매개분석/조절된 매개분석입니다. 보고 시 반드시:
+- 회귀계수(*B* 또는 *b*)와 표준오차(*SE*), 유의확률(*p*)을 중심으로 보고
+- 경로 a, 경로 b, 직접효과(c'), 간접효과(a×b)를 각각 보고
+- F값은 전체 모형 적합도일 뿐이므로 핵심 보고 대상이 아님
+- 간접효과는 부트스트래핑 95% CI와 함께 보고
+- 예: "경로 a에서 X가 M에 미치는 영향은 유의하였다, *B* = .47, *SE* = .06, *p* < .001"`;
+  } else if (framework === 'moderation') {
+    reportGuide = `
+이 분석은 조절분석입니다. 보고 시 반드시:
+- 상호작용항의 회귀계수(*B*), *SE*, *p*를 중심으로 보고
+- 단순기울기(simple slopes) 결과를 조절변수 수준별로 보고
+- ΔR²(상호작용항 추가로 인한 설명력 변화)를 보고`;
+  } else if (framework === 'hierarchical_regression') {
+    reportGuide = `
+이 분석은 위계적 회귀분석입니다. 보고 시 반드시:
+- 각 단계별 R², ΔR², F change를 보고
+- 핵심 독립변수의 회귀계수(*B* 또는 *β*), *SE*, *p*를 중심으로 보고`;
+  } else {
+    reportGuide = `
+보고 시 반드시:
+- 회귀계수(*B* 또는 *β*)와 표준오차(*SE*), *t*값, *p*를 중심으로 보고
+- R²는 모형의 설명력으로 보고
+- 개별 변수의 효과를 회귀계수 기반으로 해석`;
+  }
+
   const prompt = `당신은 APA 7th Edition 학술 논문 작성 전문가입니다.
 
 아래 Python 분석 실행 결과를 **APA 7th Edition 스타일**로 보고하세요.
@@ -206,30 +237,36 @@ ${stdout.substring(0, 4000)}
 
 [분석 맥락]:
 - 분석 단계: ${context.stepTitle || '미지정'}
+- 단계 설명: ${context.stepDescription || ''}
 - 분석 유형: ${context.analysisType || '미지정'}
+- 분석 프레임워크: ${framework}
 - 학문 분야: ${context.domain || '사회과학'}
 - 종속변수: ${context.outcome || '미지정'}
 - 독립변수: ${context.treatment || '미지정'}
+${context.mediator ? `- 매개변수: ${context.mediator}` : ''}
+${context.moderator ? `- 조절변수: ${context.moderator}` : ''}
+${reportGuide}
 
 반드시 아래 구분자 형식으로 출력하세요:
 
 ===APA_TEXT===
 APA 스타일 결과 보고문을 한국어로 작성하세요.
-규칙:
-- 통계량은 APA 형식으로: F(2, 147) = 4.52, p = .012, η² = .058
-- 통계 기호는 이탤릭 표시 가능하도록 *기호* 형태로: *F*(2, 147) = 4.52, *p* = .012
+핵심 규칙:
+- **회귀계수(*B*)와 *p*값을 중심으로 보고** — F값은 모형 전체 적합도이므로 부차적
+- 통계량은 APA 형식으로: *B* = 0.47, *SE* = 0.06, *t*(498) = 7.83, *p* < .001
 - p값이 1 미만이면 0 생략: *p* = .012 (not 0.012)
-- 효과크기 반드시 포함
-- 신뢰구간 표기: 95% CI [1.23, 4.56]
-- 2~4문장으로 핵심 결과를 보고
+- 효과크기(R², η² 등) 반드시 포함
+- 95% CI 표기: 95% CI [1.23, 4.56]
+- 3~5문장으로 핵심 결과를 보고
+- stdout의 수치를 정확히 인용 (반올림/변경 금지)
 ===END_APA_TEXT===
 
 ===TABLE_CAPTION===
-APA Table caption (한국어): 예) 회귀분석 결과: 직무 만족도에 대한 예측 변인
+APA Table caption (한국어)
 ===END_TABLE_CAPTION===
 
 ===FIGURE_CAPTION===
-APA Figure caption (한국어): 예) Figure 1. 집단 간 직무 만족도 평균 차이. 오차 막대는 95% 신뢰구간을 나타냄.
+APA Figure caption (한국어)
 ===END_FIGURE_CAPTION===`;
 
   try {
