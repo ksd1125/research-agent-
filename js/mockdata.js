@@ -221,6 +221,79 @@ function clamp(val, min, max) {
 }
 
 /**
+ * Cholesky 분해 — 양정치 대칭행렬을 하삼각행렬 L로 분해 (A = L * L^T)
+ * @param {number[][]} matrix — n×n 양정치 대칭행렬
+ * @returns {number[][]} L — 하삼각행렬
+ */
+function choleskyDecompose(matrix) {
+  const n = matrix.length;
+  const L = Array.from({ length: n }, () => new Array(n).fill(0));
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = 0;
+      for (let k = 0; k < j; k++) {
+        sum += L[i][k] * L[j][k];
+      }
+      if (i === j) {
+        const diag = matrix[i][i] - sum;
+        L[i][j] = diag > 0 ? Math.sqrt(diag) : 0;
+      } else {
+        L[i][j] = L[j][j] !== 0 ? (matrix[i][j] - sum) / L[j][j] : 0;
+      }
+    }
+  }
+  return L;
+}
+
+/**
+ * 상관구조를 보존한 다변량 데이터 생성 (Cholesky 분해 기반)
+ * @param {Array} continuousVars — 연속형 변수 목록 [{name_en, mean, sd, min, max}]
+ * @param {number[][]} corrMatrix — 상관행렬 (continuousVars와 동일 순서)
+ * @param {number} n — 생성할 행 수
+ * @returns {Object[]} 생성된 데이터 배열
+ */
+function generateCorrelatedData(continuousVars, corrMatrix, n) {
+  const p = continuousVars.length;
+  const L = choleskyDecompose(corrMatrix);
+
+  // 1. 독립 표준정규 벡터 생성 → Cholesky 변환으로 상관 부여
+  const zMatrix = [];
+  for (let i = 0; i < n; i++) {
+    const indep = [];
+    for (let j = 0; j < p; j++) {
+      indep.push(normalRandom(0, 1));
+    }
+    const correlated = [];
+    for (let j = 0; j < p; j++) {
+      let val = 0;
+      for (let k = 0; k <= j; k++) {
+        val += L[j][k] * indep[k];
+      }
+      correlated.push(val);
+    }
+    zMatrix.push(correlated);
+  }
+
+  // 2. 표준정규 → 각 변수의 mean, sd로 스케일링 + 범위 클램핑
+  const data = [];
+  for (let i = 0; i < n; i++) {
+    const row = {};
+    for (let j = 0; j < p; j++) {
+      const v = continuousVars[j];
+      const mean = v.mean ?? 0;
+      const sd = v.sd ?? 1;
+      let val = mean + sd * zMatrix[i][j];
+      val = clamp(val, v.min ?? -Infinity, v.max ?? Infinity);
+      row[v.name_en] = Math.round(val * 100) / 100;
+    }
+    data.push(row);
+  }
+
+  return data;
+}
+
+/**
  * 변수의 type과 role에 따라 합리적인 기술통계 추정값 생성
  * Agent 4+가 mean/sd를 추출하지 못했을 때 사용
  */
@@ -259,6 +332,41 @@ function estimateVariableStats(v) {
 }
 
 /**
+ * 독립 난수 기반 데이터 생성 (상관행렬 없을 때 폴백)
+ */
+function generateIndependentData(enrichedVars, n) {
+  const data = [];
+  for (let i = 0; i < n; i++) {
+    const row = {};
+    for (const v of enrichedVars) {
+      const { name_en, mean, sd, min, max, type, levels } = v;
+      const t = (type || 'continuous').toLowerCase();
+      if (t === 'binary') {
+        row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
+      } else if (t === 'categorical' || t === '범주') {
+        const cats = v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
+                   : (levels && levels.length > 0) ? levels : null;
+        if (cats && cats.length > 0) {
+          row[name_en] = cats[Math.floor(Math.random() * cats.length)];
+        } else {
+          row[name_en] = Math.floor(Math.random() * ((max || 4) - (min || 1) + 1)) + (min || 1);
+        }
+      } else if (t === 'ordinal' || (Number.isInteger(min) && Number.isInteger(max) && max - min <= 10)) {
+        let val = normalRandom(mean || 3, sd || 1);
+        val = Math.round(val);
+        row[name_en] = clamp(val, min ?? 1, max ?? 5);
+      } else {
+        let val = normalRandom(mean || 30, sd || 15);
+        val = clamp(val, min ?? -Infinity, max ?? Infinity);
+        row[name_en] = Math.round(val * 100) / 100;
+      }
+    }
+    data.push(row);
+  }
+  return data;
+}
+
+/**
  * 기술통계 기반 가상 데이터셋 생성
  * Agent 4+가 mean/sd를 추출하지 못해도 변수 구조 기반으로 500행 생성
  *
@@ -266,7 +374,7 @@ function estimateVariableStats(v) {
  * @param {number} [n=500] — 생성할 관측치 수 (기본 500행)
  * @returns {{ csv: string, data: Array<Object>, variables: Array }}
  */
-export function generateMockData(stats, n = 500, category = null) {
+export function generateMockData(stats, n = 500, category = null, correlationMatrix = null) {
   const sampleSize = n || 500;
   const variables = stats.variables || [];
 
@@ -387,36 +495,48 @@ export function generateMockData(stats, n = 500, category = null) {
   });
 
   // 2단계: 데이터 생성
-  const data = [];
-  for (let i = 0; i < sampleSize; i++) {
-    const row = {};
-    for (const v of enrichedVars) {
-      const { name_en, mean, sd, min, max, type, levels } = v;
-      const t = (type || 'continuous').toLowerCase();
-      if (t === 'binary') {
-        row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
-      } else if (t === 'categorical' || t === '범주') {
-        // categories 필드 또는 levels 필드에서 카테고리 목록 사용
-        const cats = v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
-                   : (levels && levels.length > 0) ? levels
-                   : null;
-        if (cats && cats.length > 0) {
-          row[name_en] = cats[Math.floor(Math.random() * cats.length)];
-        } else {
-          // 카테고리 목록 없으면 숫자 인덱스
-          row[name_en] = Math.floor(Math.random() * ((max || 4) - (min || 1) + 1)) + (min || 1);
+  let data;
+
+  // 상관행렬이 있으면 Cholesky 기반 상관 데이터 생성
+  const corrInfo = correlationMatrix || stats.correlation_matrix;
+  if (corrInfo && corrInfo.matrix && corrInfo.variables) {
+    const corrVarNames = corrInfo.variables;
+    const corrVarsOrdered = corrVarNames
+      .map(name => enrichedVars.find(v => v.name_en === name))
+      .filter(Boolean);
+
+    if (corrVarsOrdered.length >= 2 && corrInfo.matrix.length === corrVarsOrdered.length) {
+      const correlatedData = generateCorrelatedData(corrVarsOrdered, corrInfo.matrix, sampleSize);
+      const corrVarNameSet = new Set(corrVarsOrdered.map(v => v.name_en));
+
+      data = [];
+      for (let i = 0; i < sampleSize; i++) {
+        const row = { ...correlatedData[i] };
+        for (const v of enrichedVars) {
+          if (corrVarNameSet.has(v.name_en)) continue;
+          const { name_en, mean, sd, min, max, type, levels } = v;
+          const t = (type || 'continuous').toLowerCase();
+          if (t === 'binary') {
+            row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
+          } else if (t === 'categorical' || t === '범주') {
+            const cats = v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
+                       : (levels && levels.length > 0) ? levels : null;
+            row[name_en] = cats && cats.length > 0
+              ? cats[Math.floor(Math.random() * cats.length)]
+              : Math.floor(Math.random() * ((max || 4) - (min || 1) + 1)) + (min || 1);
+          } else {
+            let val = normalRandom(mean || 30, sd || 15);
+            val = clamp(val, min ?? -Infinity, max ?? Infinity);
+            row[name_en] = Math.round(val * 100) / 100;
+          }
         }
-      } else if (t === 'ordinal' || (Number.isInteger(min) && Number.isInteger(max) && max - min <= 10)) {
-        let val = normalRandom(mean || 3, sd || 1);
-        val = Math.round(val);
-        row[name_en] = clamp(val, min ?? 1, max ?? 5);
-      } else {
-        let val = normalRandom(mean || 30, sd || 15);
-        val = clamp(val, min ?? -Infinity, max ?? Infinity);
-        row[name_en] = Math.round(val * 100) / 100;
+        data.push(row);
       }
+    } else {
+      data = generateIndependentData(enrichedVars, sampleSize);
     }
-    data.push(row);
+  } else {
+    data = generateIndependentData(enrichedVars, sampleSize);
   }
 
   // 3단계: CSV 생성

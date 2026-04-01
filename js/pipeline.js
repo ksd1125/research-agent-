@@ -137,9 +137,21 @@ function resolveVariableNames(method, dataStructure) {
 
   resolved.key_variables = kv;
 
+  // analysis_design의 mediator/moderator도 영문명 매핑
+  if (resolved.analysis_design) {
+    const ad = { ...resolved.analysis_design };
+    if (ad.mediator) ad.mediator = findEnglishName(ad.mediator, 'mediator');
+    if (ad.moderator) ad.moderator = findEnglishName(ad.moderator, 'moderator');
+    if (Array.isArray(ad.covariates)) {
+      ad.covariates = ad.covariates.map(c => findEnglishName(c, 'control'));
+    }
+    resolved.analysis_design = ad;
+  }
+
   console.log('[변수명 매핑]', {
     original: method.key_variables,
     resolved: kv,
+    analysis_design: resolved.analysis_design || null,
   });
 
   return resolved;

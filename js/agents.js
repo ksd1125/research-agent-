@@ -185,11 +185,11 @@ const METHODOLOGY_TAXONOMY = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. regression (회귀분석 — 횡단면)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• 식별 키워드: OLS, linear regression, logistic regression, probit, tobit, quantile regression, robust SE, heteroskedasticity
+• 식별 키워드: OLS, linear regression, logistic regression, probit, tobit, quantile regression, robust SE, heteroskedasticity, 매개분석, 조절분석, 매개효과, 조절효과, PROCESS Macro, Hayes, 간접효과, indirect effect, 부트스트래핑, bootstrapping CI, Sobel test, 상호작용항, interaction term, 단순기울기, simple slopes, Johnson-Neyman, 조절된 매개, moderated mediation, 조건부 간접효과, conditional indirect effect, 위계적 회귀, hierarchical regression, ΔR²
 • 데이터 구조: 횡단면(cross-section), 단일 시점, N개 관측치
 • 결과 테이블 특징: 계수(β), 표준오차(SE), t-값, p-값, R², 조정 R²
-• 대표 분석: OLS, WLS, GLS, 로지스틱회귀, 프로빗, 토빗, 분위수회귀
-• 주의: 패널/시계열이 아닌 단일 시점 데이터에만 적용
+• 대표 분석: OLS, WLS, GLS, 로지스틱회귀, 프로빗, 토빗, 분위수회귀, 매개분석(PROCESS Model 4), 조절분석(PROCESS Model 1), 조절된 매개분석(PROCESS Model 7/8/14/58), 위계적 회귀분석
+• 주의: 패널/시계열이 아닌 단일 시점 데이터에만 적용. 매개/조절/위계적 회귀도 이 카테고리에 포함되며, analysis_design 필드에서 세부 프레임워크를 구분
 
 2. causal_inference (인과추론 — 패널/준실험)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -362,10 +362,27 @@ ${paperText}
         "outcome": "종속변수/반응변수/결과변수 설명 (30자 이내)",
         "treatment": "처리변수/핵심독립변수/요인 설명 (30자 이내)",
         "controls": "통제변수/공변량을 반드시 구체적으로 나열. 다음을 모두 포함: (1) 고정효과(fixed effects: 개체FE, 시간FE, 산업FE, 지역FE 등), (2) 더미변수(dummy/indicator variables), (3) 공변량(covariates), (4) 논문 수식에서 μ, ν, δ, γ, λ 등 그리스 문자로 표기된 통제 항목. 논문에 통제변수가 전혀 없는 경우에만 '없음'으로 표기. '미언급'은 사용 금지 — 수식/표/본문에서 반드시 찾아서 기술하세요"
+      },
+      "analysis_design": {
+        "framework": "분석 프레임워크. 반드시 다음 중 하나 선택: PROCESS | hierarchical_regression | mediation | moderation | moderated_mediation | path_analysis | none. PROCESS Macro, 매개분석, 조절분석, 조절된 매개분석, 위계적 회귀분석 등이 명시되면 해당 값 사용. 일반 회귀/기타 → none",
+        "model_number": "PROCESS Model 번호 (해당 시, 예: 1, 4, 7, 14, 58 등). PROCESS가 아니면 null",
+        "paths": ["경로 설명 (예: 'X→M→Y', 'W moderates M→Y'). 없으면 빈 배열"],
+        "mediator": "매개변수 name_en 또는 한국어명 (없으면 null)",
+        "moderator": "조절변수 name_en 또는 한국어명 (없으면 null)",
+        "covariates": ["공변량 목록 (없으면 빈 배열)"]
       }
     }
   ]
-}`;
+}
+
+analysis_design 분류 가이드:
+- PROCESS Macro (Model 1~76), Hayes 매개/조절 분석 → framework에 해당 유형 기재, model_number 명시
+- "매개효과", "간접효과", "부트스트래핑 CI", "Sobel test" → mediation (PROCESS면 PROCESS + model_number)
+- "조절효과", "상호작용항", "단순기울기", "Johnson-Neyman" → moderation
+- "조절된 매개", "조건부 간접효과", "conditional indirect effect" → moderated_mediation
+- "위계적 회귀", "단계적 회귀", "ΔR²", "모형 비교" → hierarchical_regression
+- 경로분석(SEM 아닌 관측변수 경로모형) → path_analysis
+- 위 해당 없으면 → none`;
 }
 
 /**
@@ -426,8 +443,21 @@ const AGENT1_RESPONSE_SCHEMA = {
             },
             required: ['outcome', 'controls'],
           },
+          analysis_design: {
+            type: 'object',
+            description: '매개/조절/위계적 회귀 등 분석 프레임워크 정보',
+            properties: {
+              framework: { type: 'string', enum: ['PROCESS', 'hierarchical_regression', 'mediation', 'moderation', 'moderated_mediation', 'path_analysis', 'none'] },
+              model_number: { type: 'string', nullable: true },
+              paths: { type: 'array', items: { type: 'string' } },
+              mediator: { type: 'string', nullable: true },
+              moderator: { type: 'string', nullable: true },
+              covariates: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['framework'],
+          },
         },
-        required: ['raw_name', 'analysis_type', 'key_variables'],
+        required: ['raw_name', 'analysis_type', 'key_variables', 'analysis_design'],
       },
     },
   },
@@ -1167,6 +1197,11 @@ ${paperText.substring(0, 15000)}
     }
   ],
   "structure_diagram": "데이터 구조를 텍스트로 도식화. 패널이면 'entity_id × year → treatment, outcome, controls', 실험이면 '집단(처리/통제) × 시점(사전/사후)' 등. 1~2줄.",
+  "correlation_matrix": {
+    "description": "논문의 상관분석 테이블(표)에서 추출한 변수 간 상관계수. 없으면 null",
+    "variables": ["var1_name_en", "var2_name_en", "..."],
+    "matrix": [[1.0, 0.36], [0.36, 1.0]]
+  },
   "limitations": "이 데이터의 알려진 한계점 (1~2문장). 예: '가상 데이터는 원본의 기술통계를 기반으로 역산한 것이므로 변수 간 복잡한 상관구조가 완벽히 재현되지 않을 수 있습니다.'"
 }
 
@@ -1185,7 +1220,8 @@ role 분류 가이드 (반드시 아래 기준으로 분류):
 - "분해": 종속변수를 구성하는 하위 요소 (예: 순고용창출 = 진입 + 확장 - 퇴출 - 축소). 종속변수의 분해 결과이므로 role은 "종속"이 아님
 - "층화": 분석을 하위 그룹별로 나누는 기준 변수 (예: 성별, 연령 그룹별 분석의 그룹 변수)
 - "도구": IV/2SLS에서 도구변수(instrument)
-- "매개"/"조절": 매개효과(mediation)/조절효과(moderation) 분석의 변수`;
+- "매개"/"조절": 매개효과(mediation)/조절효과(moderation) 분석의 변수
+- **correlation_matrix**: 논문에 상관분석 표(Correlation Table)가 있으면 반드시 추출. variables는 name_en과 동일한 순서로, matrix는 대칭행렬 (대각선=1.0). 상관표가 없으면 correlation_matrix: null`;
 }
 
 /**

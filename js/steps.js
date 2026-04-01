@@ -73,7 +73,18 @@ cor(df[sapply(df, is.numeric)], use="complete.obs") |> round(3)`
     }
   ];
 
-  // Category-specific steps
+  // analysis_design 기반 전용 Step (매개/조절/위계적 회귀)
+  const analysisDesign = methodMeta?.analysis_design || {};
+  const framework = analysisDesign.framework || 'none';
+
+  if (framework !== 'none' && category === 'regression') {
+    const designSteps = getDesignSpecificSteps(framework, analysisDesign, keyVars);
+    if (designSteps.length > 0) {
+      return [...baseSteps, ...designSteps];
+    }
+  }
+
+  // Category-specific steps (기존)
   const categorySteps = getCategorySpecificSteps(category, analysisType, keyVars, paperContext);
 
   return [...baseSteps, ...categorySteps];
@@ -2026,4 +2037,818 @@ ggplot(df, aes(x=${treatment}, y=${outcome})) +
   ];
 
   return stepsMap[category] || defaultSteps;
+}
+
+/* ============================================================
+   분석 설계(analysis_design) 기반 전용 Step 생성
+   매개분석, 조절분석, 조절된 매개분석, 위계적 회귀분석
+   ============================================================ */
+
+function getDesignSpecificSteps(framework, design, keyVars) {
+  const outcome = keyVars.outcome || 'outcome_var';
+  const treatment = keyVars.treatment || 'treatment_var';
+  const mediator = design.mediator || 'mediator_var';
+  const moderator = design.moderator || 'moderator_var';
+  const covariates = (design.covariates || []).join("', '");
+
+  switch (framework) {
+    case 'mediation':
+    case 'PROCESS':
+      if (design.moderator && design.mediator) {
+        return getModeratedMediationSteps(outcome, treatment, mediator, moderator, covariates);
+      }
+      if (design.moderator && !design.mediator) {
+        return getModerationSteps(outcome, treatment, moderator, covariates);
+      }
+      if (design.mediator) {
+        return getMediationSteps(outcome, treatment, mediator, covariates);
+      }
+      return getMediationSteps(outcome, treatment, mediator, covariates);
+
+    case 'moderation':
+      return getModerationSteps(outcome, treatment, moderator, covariates);
+
+    case 'moderated_mediation':
+      return getModeratedMediationSteps(outcome, treatment, mediator, moderator, covariates);
+
+    case 'hierarchical_regression':
+      return getHierarchicalRegressionSteps(outcome, treatment, covariates);
+
+    case 'path_analysis':
+      return getMediationSteps(outcome, treatment, mediator, covariates);
+
+    default:
+      return [];
+  }
+}
+
+function getMediationSteps(outcome, treatment, mediator, covariates) {
+  const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  return [
+    {
+      id: 'preprocessing_mediation',
+      title: '매개분석 전처리',
+      description: '매개변수, 독립변수, 종속변수의 분포를 확인하고 분석을 준비합니다.',
+      codeTemplate: {
+        python: `import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+
+# 핵심 변수 확인
+print("=== 매개분석 변수 구조 ===")
+print(f"독립변수(X): ${treatment}")
+print(f"매개변수(M): ${mediator}")
+print(f"종속변수(Y): ${outcome}")
+
+# 기술통계
+key_vars = ['${treatment}', '${mediator}', '${outcome}']
+available = [v for v in key_vars if v in df.columns]
+print("\\n=== 기술통계 ===")
+print(df[available].describe().round(3))
+
+# 변수 간 상관
+print("\\n=== 상관행렬 ===")
+print(df[available].corr().round(3))`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+cat("독립변수(X):", "${treatment}", "\\n")
+cat("매개변수(M):", "${mediator}", "\\n")
+cat("종속변수(Y):", "${outcome}", "\\n")
+cor(df[c("${treatment}","${mediator}","${outcome}")], use="complete.obs") |> round(3)`
+      }
+    },
+    {
+      id: 'path_a',
+      title: '경로 a: X → M (독립→매개)',
+      description: '독립변수가 매개변수에 미치는 효과(경로 a)를 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+# 경로 a: X → M
+X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
+model_a = sm.OLS(df['${mediator}'], X_a).fit(cov_type='HC1')
+print("=== 경로 a: ${treatment} → ${mediator} ===")
+print(model_a.summary())
+print(f"\\na = {model_a.params['${treatment}']:.4f}, p = {model_a.pvalues['${treatment}']:.4f}")`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+model_a <- lm(${mediator} ~ ${treatment}, data=df)
+summary(model_a)`
+      }
+    },
+    {
+      id: 'path_b_cprime',
+      title: '경로 b, c\': M → Y + 직접효과',
+      description: '매개변수→종속변수 경로(b)와 직접효과(c\')를 동시에 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+# 경로 b + c': M, X → Y
+X_bc = sm.add_constant(df[['${treatment}', '${mediator}'] + cov_cols])
+model_bc = sm.OLS(df['${outcome}'], X_bc).fit(cov_type='HC1')
+print("=== 경로 b, c': ${treatment} + ${mediator} → ${outcome} ===")
+print(model_bc.summary())
+
+b = model_bc.params['${mediator}']
+c_prime = model_bc.params['${treatment}']
+print(f"\\nb (매개→종속) = {b:.4f}, p = {model_bc.pvalues['${mediator}']:.4f}")
+print(f"c' (직접효과) = {c_prime:.4f}, p = {model_bc.pvalues['${treatment}']:.4f}")
+
+# 총효과 모형 (c = c' + a*b)
+X_c = sm.add_constant(df[['${treatment}'] + cov_cols])
+model_c = sm.OLS(df['${outcome}'], X_c).fit(cov_type='HC1')
+c_total = model_c.params['${treatment}']
+print(f"\\nc (총효과) = {c_total:.4f}, p = {model_c.pvalues['${treatment}']:.4f}")`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+model_bc <- lm(${outcome} ~ ${treatment} + ${mediator}, data=df)
+summary(model_bc)
+model_c <- lm(${outcome} ~ ${treatment}, data=df)
+summary(model_c)`
+      }
+    },
+    {
+      id: 'indirect_effect',
+      title: '간접효과 + 부트스트래핑 CI',
+      description: '간접효과(a×b)를 계산하고 부트스트래핑으로 신뢰구간을 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+# 원래 간접효과 계산
+X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
+a = sm.OLS(df['${mediator}'], X_a).fit().params['${treatment}']
+
+X_bc = sm.add_constant(df[['${treatment}', '${mediator}'] + cov_cols])
+b = sm.OLS(df['${outcome}'], X_bc).fit().params['${mediator}']
+c_prime = sm.OLS(df['${outcome}'], X_bc).fit().params['${treatment}']
+
+indirect = a * b
+print(f"간접효과 (a × b) = {indirect:.4f}")
+print(f"직접효과 (c') = {c_prime:.4f}")
+print(f"총효과 (c' + a*b) = {c_prime + indirect:.4f}")
+
+# 부트스트래핑 (5000회)
+n_boot = 5000
+boot_indirect = np.zeros(n_boot)
+n = len(df)
+
+for i in range(n_boot):
+    idx = np.random.choice(n, size=n, replace=True)
+    boot_df = df.iloc[idx]
+
+    X_a_b = sm.add_constant(boot_df[['${treatment}'] + cov_cols])
+    a_b = sm.OLS(boot_df['${mediator}'], X_a_b).fit().params['${treatment}']
+
+    X_bc_b = sm.add_constant(boot_df[['${treatment}', '${mediator}'] + cov_cols])
+    b_b = sm.OLS(boot_df['${outcome}'], X_bc_b).fit().params['${mediator}']
+
+    boot_indirect[i] = a_b * b_b
+
+ci_lower = np.percentile(boot_indirect, 2.5)
+ci_upper = np.percentile(boot_indirect, 97.5)
+
+print(f"\\n=== 부트스트래핑 95% CI (N={n_boot}) ===")
+print(f"간접효과: {indirect:.4f} [{ci_lower:.4f}, {ci_upper:.4f}]")
+print(f"{'→ 유의' if ci_lower > 0 or ci_upper < 0 else '→ 비유의'} (0이 CI에 {'미포함' if ci_lower > 0 or ci_upper < 0 else '포함'})")`,
+        r: `library(boot)
+df <- read.csv('mock_data.csv') |> na.omit()
+
+indirect_fn <- function(data, indices) {
+  d <- data[indices, ]
+  a <- coef(lm(${mediator} ~ ${treatment}, data=d))["${treatment}"]
+  b <- coef(lm(${outcome} ~ ${treatment} + ${mediator}, data=d))["${mediator}"]
+  a * b
+}
+set.seed(42)
+boot_result <- boot(df, indirect_fn, R=5000)
+boot.ci(boot_result, type="perc")`
+      }
+    },
+    {
+      id: 'visualization_mediation',
+      title: '매개효과 시각화',
+      description: '경로 다이어그램과 부트스트래핑 분포를 시각화합니다.',
+      codeTemplate: {
+        python: `import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import statsmodels.api as sm
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+# 계수 추정
+X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
+model_a = sm.OLS(df['${mediator}'], X_a).fit()
+a = model_a.params['${treatment}']
+a_p = model_a.pvalues['${treatment}']
+
+X_bc = sm.add_constant(df[['${treatment}', '${mediator}'] + cov_cols])
+model_bc = sm.OLS(df['${outcome}'], X_bc).fit()
+b = model_bc.params['${mediator}']
+b_p = model_bc.pvalues['${mediator}']
+c_prime = model_bc.params['${treatment}']
+cp_p = model_bc.pvalues['${treatment}']
+
+indirect = a * b
+
+# 경로 다이어그램
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.set_xlim(0, 10)
+ax.set_ylim(0, 8)
+ax.axis('off')
+
+# 변수 박스
+for pos, label in [((1, 4), '${treatment}\\n(X)'), ((5, 7), '${mediator}\\n(M)'), ((9, 4), '${outcome}\\n(Y)')]:
+    ax.add_patch(mpatches.FancyBboxPatch((pos[0]-0.8, pos[1]-0.5), 1.6, 1, boxstyle="round,pad=0.1", facecolor='lightblue', edgecolor='black'))
+    ax.text(pos[0], pos[1], label, ha='center', va='center', fontsize=11, fontweight='bold')
+
+# 화살표 + 계수
+sig = lambda p: '***' if p < .001 else '**' if p < .01 else '*' if p < .05 else ''
+ax.annotate('', xy=(4.2, 7), xytext=(1.8, 4.5), arrowprops=dict(arrowstyle='->', lw=2))
+ax.text(2.5, 6.2, f'a = {a:.3f}{sig(a_p)}', fontsize=10, fontweight='bold')
+ax.annotate('', xy=(8.2, 4.5), xytext=(5.8, 7), arrowprops=dict(arrowstyle='->', lw=2))
+ax.text(7.2, 6.2, f'b = {b:.3f}{sig(b_p)}', fontsize=10, fontweight='bold')
+ax.annotate('', xy=(8.2, 4), xytext=(1.8, 4), arrowprops=dict(arrowstyle='->', lw=2, linestyle='dashed'))
+ax.text(5, 3.3, f"c' = {c_prime:.3f}{sig(cp_p)}", fontsize=10, fontweight='bold')
+ax.text(5, 2.3, f"간접효과(a×b) = {indirect:.4f}", fontsize=11, ha='center', fontweight='bold', color='darkred')
+
+ax.set_title('매개효과 경로 다이어그램', fontsize=14, fontweight='bold', pad=20)
+plt.tight_layout()
+plt.show()`,
+        r: `cat("경로 다이어그램은 Python 탭에서 확인하세요.")`
+      }
+    }
+  ];
+}
+
+function getModerationSteps(outcome, treatment, moderator, covariates) {
+  const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  return [
+    {
+      id: 'preprocessing_moderation',
+      title: '조절분석 전처리 (평균중심화)',
+      description: '조절변수와 독립변수를 평균중심화하고 상호작용항을 생성합니다.',
+      codeTemplate: {
+        python: `import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+
+print("=== 조절분석 변수 구조 ===")
+print(f"독립변수(X): ${treatment}")
+print(f"조절변수(W): ${moderator}")
+print(f"종속변수(Y): ${outcome}")
+
+# 평균중심화
+df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
+df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
+
+# 상호작용항 생성
+df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+
+print("\\n=== 기술통계 (중심화 후) ===")
+key = ['${treatment}_c', '${moderator}_c', 'interaction', '${outcome}']
+available = [v for v in key if v in df.columns]
+print(df[available].describe().round(3))
+
+print("\\n=== 상관행렬 ===")
+print(df[available].corr().round(3))`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+df$x_c <- scale(df$${treatment}, scale=FALSE)
+df$w_c <- scale(df$${moderator}, scale=FALSE)
+df$interaction <- df$x_c * df$w_c
+summary(df[c("x_c","w_c","interaction","${outcome}")])`
+      }
+    },
+    {
+      id: 'interaction_model',
+      title: '상호작용 모형 추정',
+      description: '독립변수, 조절변수, 상호작용항을 포함한 회귀모형을 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+# 평균중심화
+df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
+df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
+df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+
+# 모형 1: 주효과만
+X1 = sm.add_constant(df[['${treatment}_c', '${moderator}_c'] + cov_cols])
+model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
+print("=== 모형 1: 주효과만 ===")
+print(model1.summary())
+
+# 모형 2: 상호작용항 포함
+X2 = sm.add_constant(df[['${treatment}_c', '${moderator}_c', 'interaction'] + cov_cols])
+model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
+print("\\n=== 모형 2: 상호작용항 포함 ===")
+print(model2.summary())
+
+# R² 변화
+delta_r2 = model2.rsquared - model1.rsquared
+print(f"\\nΔR² = {delta_r2:.4f}")
+print(f"상호작용 계수 = {model2.params['interaction']:.4f}, p = {model2.pvalues['interaction']:.4f}")`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+df$x_c <- scale(df$${treatment}, scale=FALSE)
+df$w_c <- scale(df$${moderator}, scale=FALSE)
+model1 <- lm(${outcome} ~ x_c + w_c, data=df)
+model2 <- lm(${outcome} ~ x_c * w_c, data=df)
+anova(model1, model2)
+summary(model2)`
+      }
+    },
+    {
+      id: 'simple_slopes',
+      title: '단순기울기 분석 (Simple Slopes)',
+      description: '조절변수의 수준별(M-1SD, M, M+1SD) 독립변수→종속변수 효과를 분석합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
+df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
+df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+
+X = sm.add_constant(df[['${treatment}_c', '${moderator}_c', 'interaction'] + cov_cols])
+model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+
+b1 = model.params['${treatment}_c']      # X 주효과
+b3 = model.params['interaction']          # 상호작용
+w_sd = df['${moderator}'].std()
+
+print("=== 단순기울기 분석 ===")
+for label, w_val in [('M - 1SD', -w_sd), ('M (평균)', 0), ('M + 1SD', w_sd)]:
+    slope = b1 + b3 * w_val
+    # 단순기울기의 SE 근사 계산
+    vcov = model.cov_params()
+    se = np.sqrt(vcov.loc['${treatment}_c','${treatment}_c'] +
+                 2*w_val*vcov.loc['${treatment}_c','interaction'] +
+                 w_val**2*vcov.loc['interaction','interaction'])
+    t_val = slope / se
+    p_val = 2 * (1 - __import__('scipy').stats.t.cdf(abs(t_val), model.df_resid))
+    sig = '***' if p_val < .001 else '**' if p_val < .01 else '*' if p_val < .05 else 'ns'
+    print(f"{label}: slope = {slope:.4f}, SE = {se:.4f}, t = {t_val:.4f}, p = {p_val:.4f} {sig}")`,
+        r: `library(interactions)
+df <- read.csv('mock_data.csv') |> na.omit()
+df$x_c <- scale(df$${treatment}, scale=FALSE)
+df$w_c <- scale(df$${moderator}, scale=FALSE)
+model <- lm(${outcome} ~ x_c * w_c, data=df)
+sim_slopes(model, pred=x_c, modx=w_c, jnplot=TRUE)`
+      }
+    },
+    {
+      id: 'visualization_moderation',
+      title: '조절효과 시각화',
+      description: '조절변수 수준별 회귀선 그래프(상호작용 플롯)를 생성합니다.',
+      codeTemplate: {
+        python: `import matplotlib.pyplot as plt
+import statsmodels.api as sm
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+
+df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
+df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
+df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+
+X = sm.add_constant(df[['${treatment}_c', '${moderator}_c', 'interaction']])
+model = sm.OLS(df['${outcome}'], X).fit()
+
+b0, b1, b2, b3 = model.params['const'], model.params['${treatment}_c'], model.params['${moderator}_c'], model.params['interaction']
+w_sd = df['${moderator}'].std()
+
+x_range = np.linspace(df['${treatment}_c'].min(), df['${treatment}_c'].max(), 100)
+
+fig, ax = plt.subplots(figsize=(8, 6))
+for w_val, label, color in [(-w_sd, 'Low (-1SD)', 'blue'), (0, 'Mean', 'green'), (w_sd, 'High (+1SD)', 'red')]:
+    y_pred = b0 + (b1 + b3 * w_val) * x_range + b2 * w_val
+    ax.plot(x_range, y_pred, label=f'${moderator} {label}', color=color, linewidth=2)
+
+ax.set_xlabel('${treatment} (중심화)', fontsize=12)
+ax.set_ylabel('${outcome}', fontsize=12)
+ax.set_title('조절효과: ${moderator} 수준별 ${treatment}→${outcome} 관계', fontsize=13)
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()`,
+        r: `library(ggplot2)
+library(interactions)
+df <- read.csv('mock_data.csv') |> na.omit()
+df$x_c <- scale(df$${treatment}, scale=FALSE)
+df$w_c <- scale(df$${moderator}, scale=FALSE)
+model <- lm(${outcome} ~ x_c * w_c, data=df)
+interact_plot(model, pred=x_c, modx=w_c)`
+      }
+    }
+  ];
+}
+
+function getModeratedMediationSteps(outcome, treatment, mediator, moderator, covariates) {
+  const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  return [
+    {
+      id: 'preprocessing_modmed',
+      title: '조절된 매개분석 전처리',
+      description: '변수 확인, 평균중심화, 상관행렬을 확인합니다.',
+      codeTemplate: {
+        python: `import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+
+print("=== 조절된 매개분석 변수 구조 ===")
+print(f"독립변수(X): ${treatment}")
+print(f"매개변수(M): ${mediator}")
+print(f"조절변수(W): ${moderator}")
+print(f"종속변수(Y): ${outcome}")
+
+# 평균중심화
+for v in ['${treatment}', '${mediator}', '${moderator}']:
+    if v in df.columns:
+        df[v + '_c'] = df[v] - df[v].mean()
+
+key_vars = ['${treatment}', '${mediator}', '${moderator}', '${outcome}']
+available = [v for v in key_vars if v in df.columns]
+print("\\n=== 상관행렬 ===")
+print(df[available].corr().round(3))`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+cat("X:", "${treatment}", "\\nM:", "${mediator}", "\\nW:", "${moderator}", "\\nY:", "${outcome}", "\\n")
+cor(df[c("${treatment}","${mediator}","${moderator}","${outcome}")], use="complete.obs") |> round(3)`
+      }
+    },
+    {
+      id: 'path_a_modmed',
+      title: '경로 a: X → M',
+      description: '독립변수→매개변수 경로를 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
+model_a = sm.OLS(df['${mediator}'], X_a).fit(cov_type='HC1')
+print("=== 경로 a: ${treatment} → ${mediator} ===")
+print(model_a.summary())`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+model_a <- lm(${mediator} ~ ${treatment}, data=df)
+summary(model_a)`
+      }
+    },
+    {
+      id: 'path_b_moderated',
+      title: '경로 b(조절됨): M*W → Y',
+      description: '매개변수→종속변수 경로에 조절변수의 상호작용을 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+# 평균중심화
+df['${mediator}_c'] = df['${mediator}'] - df['${mediator}'].mean()
+df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
+df['MW_interaction'] = df['${mediator}_c'] * df['${moderator}_c']
+
+X = sm.add_constant(df[['${treatment}', '${mediator}_c', '${moderator}_c', 'MW_interaction'] + cov_cols])
+model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+print("=== M + W + M×W → Y (직접효과 포함) ===")
+print(model.summary())
+
+print(f"\\nb (M→Y 주효과) = {model.params['${mediator}_c']:.4f}")
+print(f"상호작용 (M×W) = {model.params['MW_interaction']:.4f}, p = {model.pvalues['MW_interaction']:.4f}")`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+df$m_c <- scale(df$${mediator}, scale=FALSE)
+df$w_c <- scale(df$${moderator}, scale=FALSE)
+model <- lm(${outcome} ~ ${treatment} + m_c * w_c, data=df)
+summary(model)`
+      }
+    },
+    {
+      id: 'conditional_indirect',
+      title: '조건부 간접효과 (부트스트래핑)',
+      description: '조절변수 수준별 간접효과를 부트스트래핑으로 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+w_mean = df['${moderator}'].mean()
+w_sd = df['${moderator}'].std()
+w_levels = {'Low (-1SD)': w_mean - w_sd, 'Mean': w_mean, 'High (+1SD)': w_mean + w_sd}
+
+n_boot = 5000
+n = len(df)
+results = {k: np.zeros(n_boot) for k in w_levels}
+
+for i in range(n_boot):
+    idx = np.random.choice(n, size=n, replace=True)
+    bd = df.iloc[idx].copy()
+
+    # 경로 a
+    X_a = sm.add_constant(bd[['${treatment}'] + cov_cols])
+    a = sm.OLS(bd['${mediator}'], X_a).fit().params['${treatment}']
+
+    # 경로 b (조절됨)
+    bd['m_c'] = bd['${mediator}'] - bd['${mediator}'].mean()
+    bd['w_c'] = bd['${moderator}'] - bd['${moderator}'].mean()
+    bd['mw'] = bd['m_c'] * bd['w_c']
+    X_b = sm.add_constant(bd[['${treatment}', 'm_c', 'w_c', 'mw'] + cov_cols])
+    model_b = sm.OLS(bd['${outcome}'], X_b).fit()
+    b_main = model_b.params['m_c']
+    b_int = model_b.params['mw']
+
+    for label, w_val in w_levels.items():
+        b_cond = b_main + b_int * (w_val - w_mean)
+        results[label][i] = a * b_cond
+
+print("=== 조건부 간접효과 (부트스트래핑 95% CI) ===")
+for label, boots in results.items():
+    ci_lo, ci_hi = np.percentile(boots, [2.5, 97.5])
+    mean_ie = np.mean(boots)
+    sig = '유의' if ci_lo > 0 or ci_hi < 0 else '비유의'
+    print(f"{label}: indirect = {mean_ie:.4f} [{ci_lo:.4f}, {ci_hi:.4f}] → {sig}")
+
+# 조절된 매개 지수 (Index of Moderated Mediation)
+idx_mm = results['High (+1SD)'] - results['Low (-1SD)']
+ci_lo, ci_hi = np.percentile(idx_mm, [2.5, 97.5])
+print(f"\\n조절된 매개 지수 = {np.mean(idx_mm):.4f} [{ci_lo:.4f}, {ci_hi:.4f}]")`,
+        r: `cat("R 코드는 Python 탭 참조\\n")
+cat("PROCESS macro 또는 mediation 패키지 사용을 권장합니다.")`
+      }
+    },
+    {
+      id: 'visualization_modmed',
+      title: '조건부 간접효과 시각화',
+      description: '조절변수 수준별 간접효과 그래프를 생성합니다.',
+      codeTemplate: {
+        python: `import matplotlib.pyplot as plt
+import numpy as np
+import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+w_mean = df['${moderator}'].mean()
+w_sd = df['${moderator}'].std()
+
+# 경로 a 추정
+X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
+a = sm.OLS(df['${mediator}'], X_a).fit().params['${treatment}']
+
+# 경로 b (조절됨) 추정
+df['m_c'] = df['${mediator}'] - df['${mediator}'].mean()
+df['w_c'] = df['${moderator}'] - df['${moderator}'].mean()
+df['mw'] = df['m_c'] * df['w_c']
+X_b = sm.add_constant(df[['${treatment}', 'm_c', 'w_c', 'mw'] + cov_cols])
+model_b = sm.OLS(df['${outcome}'], X_b).fit()
+b_main = model_b.params['m_c']
+b_int = model_b.params['mw']
+
+# 조절변수 범위에서 간접효과 계산
+w_range = np.linspace(df['${moderator}'].min(), df['${moderator}'].max(), 50)
+indirect_effects = [a * (b_main + b_int * (w - w_mean)) for w in w_range]
+
+fig, ax = plt.subplots(figsize=(8, 6))
+ax.plot(w_range, indirect_effects, 'b-', linewidth=2)
+ax.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+ax.fill_between(w_range, 0, indirect_effects, alpha=0.1, color='blue')
+
+# 수준 표시
+for w_val, label in [(w_mean - w_sd, '-1SD'), (w_mean, 'M'), (w_mean + w_sd, '+1SD')]:
+    ie = a * (b_main + b_int * (w_val - w_mean))
+    ax.axvline(x=w_val, color='gray', linestyle=':', alpha=0.5)
+    ax.plot(w_val, ie, 'ro', markersize=8)
+    ax.annotate(f'{label}\\n{ie:.3f}', xy=(w_val, ie), xytext=(5, 10), textcoords='offset points', fontsize=9)
+
+ax.set_xlabel('${moderator}', fontsize=12)
+ax.set_ylabel('간접효과 (a × b)', fontsize=12)
+ax.set_title('조건부 간접효과: ${moderator} 수준에 따른 매개효과 변화', fontsize=13)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()`,
+        r: `cat("R 시각화는 Python 탭 참조")`
+      }
+    }
+  ];
+}
+
+function getHierarchicalRegressionSteps(outcome, treatment, covariates) {
+  const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  return [
+    {
+      id: 'model_step1',
+      title: '1단계: 통제변수 모형',
+      description: '통제변수만 포함한 기저 모형을 추정합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+if not cov_cols:
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+
+X1 = sm.add_constant(df[cov_cols])
+model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
+print("=== 1단계: 통제변수 모형 ===")
+print(model1.summary())
+print(f"\\nR² = {model1.rsquared:.4f}")`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+model1 <- lm(${outcome} ~ ., data=df[c("${outcome}", "control1", "control2")])
+summary(model1)`
+      }
+    },
+    {
+      id: 'model_step2',
+      title: '2단계: 핵심 독립변수 추가',
+      description: '핵심 독립변수를 추가하고 R² 변화량을 확인합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+if not cov_cols:
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+
+# 1단계
+X1 = sm.add_constant(df[cov_cols])
+model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
+
+# 2단계: + 핵심 독립변수
+X2 = sm.add_constant(df[cov_cols + ['${treatment}']])
+model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
+print("=== 2단계: 핵심 독립변수 추가 ===")
+print(model2.summary())
+
+delta_r2 = model2.rsquared - model1.rsquared
+print(f"\\nR² 변화: {model1.rsquared:.4f} → {model2.rsquared:.4f}")
+print(f"ΔR² = {delta_r2:.4f}")
+
+# F 변화 검정
+from scipy import stats
+df_num = model2.df_model - model1.df_model
+df_den = model2.df_resid
+f_change = (delta_r2 / df_num) / ((1 - model2.rsquared) / df_den)
+p_change = 1 - stats.f.cdf(f_change, df_num, df_den)
+print(f"F change = {f_change:.4f}, p = {p_change:.4f}")`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+model1 <- lm(${outcome} ~ control1 + control2, data=df)
+model2 <- lm(${outcome} ~ control1 + control2 + ${treatment}, data=df)
+anova(model1, model2)
+summary(model2)`
+      }
+    },
+    {
+      id: 'model_comparison',
+      title: '모형 비교 (ΔR² 종합)',
+      description: '모든 단계의 R² 변화와 F 검정 결과를 종합합니다.',
+      codeTemplate: {
+        python: `import statsmodels.api as sm
+import pandas as pd
+import numpy as np
+from scipy import stats
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+if not cov_cols:
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+
+models = []
+# 1단계
+X1 = sm.add_constant(df[cov_cols])
+m1 = sm.OLS(df['${outcome}'], X1).fit()
+models.append(('1단계: 통제변수', m1))
+
+# 2단계
+X2 = sm.add_constant(df[cov_cols + ['${treatment}']])
+m2 = sm.OLS(df['${outcome}'], X2).fit()
+models.append(('2단계: + 핵심 IV', m2))
+
+print("=== 위계적 회귀분석 종합 ===")
+print(f"{'단계':<20} {'R²':>8} {'adj R²':>8} {'ΔR²':>8} {'F change':>10} {'p':>8}")
+print("-" * 65)
+
+prev_r2 = 0
+for name, m in models:
+    dr2 = m.rsquared - prev_r2
+    if prev_r2 == 0:
+        f_ch, p_ch = m.fvalue, m.f_pvalue
+    else:
+        df_num = m.df_model - models[models.index((name,m))-1][1].df_model
+        df_den = m.df_resid
+        f_ch = (dr2 / max(df_num, 1)) / ((1 - m.rsquared) / df_den)
+        p_ch = 1 - stats.f.cdf(f_ch, max(df_num, 1), df_den)
+    sig = '***' if p_ch < .001 else '**' if p_ch < .01 else '*' if p_ch < .05 else ''
+    print(f"{name:<20} {m.rsquared:>8.4f} {m.rsquared_adj:>8.4f} {dr2:>8.4f} {f_ch:>10.4f} {p_ch:>7.4f} {sig}")
+    prev_r2 = m.rsquared`,
+        r: `df <- read.csv('mock_data.csv') |> na.omit()
+model1 <- lm(${outcome} ~ control1 + control2, data=df)
+model2 <- lm(${outcome} ~ control1 + control2 + ${treatment}, data=df)
+anova(model1, model2)`
+      }
+    },
+    {
+      id: 'visualization_hierarchical',
+      title: 'R² 변화 시각화',
+      description: '각 단계별 R² 변화를 막대그래프로 시각화합니다.',
+      codeTemplate: {
+        python: `import matplotlib.pyplot as plt
+import statsmodels.api as sm
+import pandas as pd
+
+df = pd.read_csv('mock_data.csv').dropna()
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
+
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+if not cov_cols:
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+
+X1 = sm.add_constant(df[cov_cols])
+m1 = sm.OLS(df['${outcome}'], X1).fit()
+
+X2 = sm.add_constant(df[cov_cols + ['${treatment}']])
+m2 = sm.OLS(df['${outcome}'], X2).fit()
+
+stages = ['1단계\\n(통제변수)', '2단계\\n(+ ${treatment})']
+r2_vals = [m1.rsquared, m2.rsquared]
+delta_r2 = [m1.rsquared, m2.rsquared - m1.rsquared]
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+# R² 누적
+axes[0].bar(stages, r2_vals, color=['steelblue', 'coral'])
+axes[0].set_ylabel('R²')
+axes[0].set_title('단계별 R² (누적)')
+for i, v in enumerate(r2_vals):
+    axes[0].text(i, v + 0.01, f'{v:.4f}', ha='center', fontweight='bold')
+
+# ΔR²
+colors = ['steelblue', 'coral']
+axes[1].bar(stages, delta_r2, color=colors)
+axes[1].set_ylabel('ΔR²')
+axes[1].set_title('단계별 R² 변화량')
+for i, v in enumerate(delta_r2):
+    axes[1].text(i, v + 0.005, f'{v:.4f}', ha='center', fontweight='bold')
+
+plt.suptitle('위계적 회귀분석: R² 변화', fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.show()`,
+        r: `cat("R 시각화는 Python 탭 참조")`
+      }
+    }
+  ];
 }
