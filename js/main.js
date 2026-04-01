@@ -19,15 +19,43 @@ const STORAGE_KEY = 'rma_api_key';
  */
 function init() {
   const pdfFileInput = document.getElementById('pdf-file');
-  const uploadBtn = document.getElementById('upload-btn');
-  const analyzeBtn = document.getElementById('analyze-btn');
+  const dropZone = document.getElementById('drop-zone');
+  const tabText = document.getElementById('tab-text');
+  const tabPdf = document.getElementById('tab-pdf');
+  const panelText = document.getElementById('panel-text');
+  const panelPdf = document.getElementById('panel-pdf');
+  const analyzeBtn = document.getElementById('run-btn');
 
   // ===== API 키 UI 초기화 =====
   initApiKeyUI();
 
-  // ===== PDF 업로드 버튼 =====
-  if (uploadBtn && pdfFileInput) {
-    uploadBtn.addEventListener('click', () => pdfFileInput.click());
+  // ===== 입력 탭 전환 =====
+  if (tabText && tabPdf) {
+    tabText.addEventListener('click', () => {
+      tabText.classList.add('active');
+      tabPdf.classList.remove('active');
+      if (panelText) panelText.style.display = '';
+      if (panelPdf) panelPdf.style.display = 'none';
+    });
+    tabPdf.addEventListener('click', () => {
+      tabPdf.classList.add('active');
+      tabText.classList.remove('active');
+      if (panelPdf) panelPdf.style.display = '';
+      if (panelText) panelText.style.display = 'none';
+    });
+  }
+
+  // ===== PDF 업로드 (클릭 + 드래그) =====
+  if (dropZone && pdfFileInput) {
+    dropZone.addEventListener('click', () => pdfFileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type === 'application/pdf') handlePdfFile(file);
+    });
     pdfFileInput.addEventListener('change', () => {
       const file = pdfFileInput.files[0];
       if (file) handlePdfFile(file);
