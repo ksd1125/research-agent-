@@ -84,6 +84,50 @@ function getCategorySpecificSteps(category, analysisType, keyVars, paperContext)
   const treatment = keyVars.treatment || 'treatment_var';
   const controls = keyVars.controls || 'control_vars';
 
+  // 4-L: 모형 추정 Step 공통 사전 검증 코드 스니펫
+  // 변수 존재 확인 + 없으면 가장 유사한 컬럼 자동 매핑 시도
+  const validationSnippet = `
+# === 변수 사전 검증 ===
+def find_closest_column(df, target, role=''):
+    """컬럼명이 정확히 없으면 유사 컬럼 자동 탐색"""
+    if target in df.columns:
+        return target
+    # 부분 일치 탐색
+    candidates = [c for c in df.columns if target.lower() in c.lower() or c.lower() in target.lower()]
+    if candidates:
+        print(f"  → '{target}' 대신 '{candidates[0]}' 사용")
+        return candidates[0]
+    # role 기반 폴백
+    id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+    if role == 'outcome':
+        nums = [c for c in df.select_dtypes(include='number').columns if c not in id_cols]
+        if nums:
+            print(f"  → 종속변수 '{target}' 미발견, 수치형 첫 번째 '{nums[0]}' 사용")
+            return nums[0]
+    if role == 'treatment':
+        # Sprint 2-F: 이진(0/1) 변수 우선, 없으면 수치형 두 번째
+        nums = [c for c in df.select_dtypes(include='number').columns if c not in id_cols]
+        for c in nums:
+            if set(df[c].dropna().unique()) <= {0, 1, 0.0, 1.0}:
+                print(f"  → 처리변수 '{target}' 미발견, 이진변수 '{c}' 사용")
+                return c
+        if len(nums) > 1:
+            print(f"  → 처리변수 '{target}' 미발견, 수치형 두 번째 '{nums[1]}' 사용")
+            return nums[1]
+    return None
+
+_outcome = find_closest_column(df, '${outcome}', 'outcome')
+_treatment = find_closest_column(df, '${treatment}', 'treatment')
+
+if not _outcome or not _treatment:
+    missing = []
+    if not _outcome: missing.append(f"종속변수(${outcome})")
+    if not _treatment: missing.append(f"처리변수(${treatment})")
+    print(f"⚠️ 필수 변수 미발견: {', '.join(missing)}")
+    print(f"  현재 컬럼: {list(df.columns)}")
+    raise SystemExit(0)
+`;
+
   const stepsMap = {
     regression: [
       {
@@ -96,16 +140,22 @@ import numpy as np
 
 df = pd.read_csv('mock_data.csv')
 
-# 로그 변환 (필요 시)
-# df['log_${outcome}'] = np.log(df['${outcome}'] + 1)
-
 # 결측치 처리
 df = df.dropna()
 
-# 더미 변수 생성 (범주형 변수)
-# df = pd.get_dummies(df, columns=['category_var'], drop_first=True)
+# Sprint 2-F: 범주형 변수 자동 감지 및 더미 인코딩
+cat_cols = df.select_dtypes(exclude='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+cat_cols = [c for c in cat_cols if c not in id_cols]
+if cat_cols:
+    print(f"📌 범주형 변수 {len(cat_cols)}개 감지 → 더미 인코딩: {cat_cols}")
+    df = pd.get_dummies(df, columns=cat_cols, drop_first=True, dtype=float)
+    print(f"   → 인코딩 후: {df.shape[1]}개 컬럼")
 
-print(f"전처리 후 데이터: {df.shape[0]}행 × {df.shape[1]}열")
+# 로그 변환 (필요 시)
+# df['log_${outcome}'] = np.log(df['${outcome}'] + 1)
+
+print(f"\\n전처리 후 데이터: {df.shape[0]}행 × {df.shape[1]}열")
 print(df.head())`,
           r: `library(dplyr)
 df <- read.csv('mock_data.csv')
@@ -129,10 +179,10 @@ head(df)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-
+${validationSnippet}
 # 모형 1: 기본 모형 (핵심 독립변수만)
-X1 = sm.add_constant(df[['${treatment}']])
-model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
+X1 = sm.add_constant(df[[_treatment]])
+model1 = sm.OLS(df[_outcome], X1).fit(cov_type='HC1')
 print("=== Model 1: 기본 모형 ===")
 print(model1.summary())`,
           r: `library(lmtest)
@@ -153,13 +203,13 @@ coeftest(model1, vcov=vcovHC(model1, type="HC1"))`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-
+${validationSnippet}
 # 모형 2: 통제변수 포함
 id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 numeric_cols = df.select_dtypes(include='number').columns.tolist()
-control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols]
-X2 = sm.add_constant(df[['${treatment}'] + control_cols[:5]])
-model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
+control_cols = [c for c in numeric_cols if c not in [_outcome, _treatment] + id_cols]
+X2 = sm.add_constant(df[[_treatment] + control_cols[:5]])
+model2 = sm.OLS(df[_outcome], X2).fit(cov_type='HC1')
 print("=== Model 2: 통제변수 포함 ===")
 print(model2.summary())`,
           r: `df <- read.csv('mock_data.csv') |> na.omit()
@@ -181,10 +231,11 @@ import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${validationSnippet}
 id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
-X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
-model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+X = sm.add_constant(numeric_df.drop(columns=[_outcome]))
+model = sm.OLS(df[_outcome], X).fit(cov_type='HC1')
 
 # 계수 Forest Plot
 fig, ax = plt.subplots(figsize=(8, 5))
@@ -239,6 +290,14 @@ numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols
 print("\\n=== 수치형 변수 기술통계 ===")
 print(numeric_df.describe().round(3))
 
+# Sprint 2-F: 범주형 변수 자동 감지
+cat_cols = df.select_dtypes(exclude='number').columns.tolist()
+cat_cols = [c for c in cat_cols if c not in id_cols]
+if cat_cols:
+    print(f"\\n📌 범주형 변수 {len(cat_cols)}개: {cat_cols}")
+    for col in cat_cols:
+        print(f"  [{col}] → {df[col].nunique()}개 수준: {df[col].value_counts().head(5).to_dict()}")
+
 # 처리변수 분포 (있는 경우)
 if '${treatment}' in df.columns:
     vals = df['${treatment}']
@@ -278,15 +337,15 @@ if ("year" %in% names(df)) {
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
-
+${validationSnippet}
 # Entity & Time 더미변수 생성
 entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
 time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
 
 # 모형 1: Entity FE + Time FE (더미변수 방식)
-X = pd.concat([df[['${treatment}']], entity_dummies, time_dummies], axis=1)
+X = pd.concat([df[[_treatment]], entity_dummies, time_dummies], axis=1)
 X = sm.add_constant(X)
-model1 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
+model1 = sm.OLS(df[_outcome], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
 print("=== Model 1: 기본 고정효과 모형 ===")
 print(model1.summary().tables[1])`,
           r: `library(fixest)
@@ -307,19 +366,19 @@ summary(model1)`
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
-
+${validationSnippet}
 # Entity & Time 더미변수 생성
 entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
 time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
 
 # 통제변수 선택 (수치형만, 식별자 제외)
 numeric_cols = df.select_dtypes(include='number').columns.tolist()
-control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}', 'entity_id', 'year']]
+control_cols = [c for c in numeric_cols if c not in [_outcome, _treatment, 'entity_id', 'year']]
 
 # 모형 2: FE + 통제변수
-X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1)
+X = pd.concat([df[[_treatment] + control_cols[:4]], entity_dummies, time_dummies], axis=1)
 X = sm.add_constant(X)
-model2 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
+model2 = sm.OLS(df[_outcome], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
 print("=== Model 2: 통제변수 포함 ===")
 print(model2.summary().tables[1])`,
           r: `library(fixest)
@@ -341,15 +400,15 @@ import statsmodels.api as sm
 from statsmodels.regression.mixed_linear_model import MixedLM
 
 df = pd.read_csv('mock_data.csv')
-
+${validationSnippet}
 # 강건성 1: Pooled OLS (고정효과 없이)
-X_pooled = sm.add_constant(df[['${treatment}']])
-pooled = sm.OLS(df['${outcome}'], X_pooled).fit(cov_type='HC1')
+X_pooled = sm.add_constant(df[[_treatment]])
+pooled = sm.OLS(df[_outcome], X_pooled).fit(cov_type='HC1')
 print("=== Pooled OLS ===")
-print(f"계수: {pooled.params['${treatment}']:.4f}, p-value: {pooled.pvalues['${treatment}']:.4f}")
+print(f"계수: {pooled.params[_treatment]:.4f}, p-value: {pooled.pvalues[_treatment]:.4f}")
 
 # 강건성 2: Random Effects (Mixed Linear Model)
-re_model = MixedLM(df['${outcome}'], df[['${treatment}']], groups=df['entity_id'])
+re_model = MixedLM(df[_outcome], df[[_treatment]], groups=df['entity_id'])
 re_result = re_model.fit(reml=True)
 print(f"\\n=== Random Effects (MixedLM) ===")
 print(re_result.summary().tables[1])`,
@@ -379,28 +438,28 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv')
-
+${validationSnippet}
 # Event-study style plot: 연도별 종속변수 추이
-if 'year' in df.columns and '${treatment}' in df.columns:
-    treated = df[df['${treatment}']==1].groupby('year')['${outcome}'].mean()
-    control = df[df['${treatment}']==0].groupby('year')['${outcome}'].mean()
+if 'year' in df.columns and _treatment in df.columns:
+    treated = df[df[_treatment]==1].groupby('year')[_outcome].mean()
+    control = df[df[_treatment]==0].groupby('year')[_outcome].mean()
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(treated.index, treated.values, 'o-', label='처리군', color='#D32F2F')
     ax.plot(control.index, control.values, 's--', label='통제군', color='#185FA5')
     ax.set_xlabel('연도')
-    ax.set_ylabel('${outcome} 평균')
+    ax.set_ylabel(f'{_outcome} 평균')
     ax.set_title('처리군 vs 통제군 추이 비교')
     ax.legend()
     plt.tight_layout()
     plt.show()
 elif 'year' in df.columns:
-    yearly = df.groupby('year')['${outcome}'].mean()
+    yearly = df.groupby('year')[_outcome].mean()
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(yearly.index, yearly.values, 'o-', color='#185FA5')
     ax.set_xlabel('연도')
-    ax.set_ylabel('${outcome} 평균')
-    ax.set_title('연도별 ${outcome} 추이')
+    ax.set_ylabel(f'{_outcome} 평균')
+    ax.set_title(f'연도별 {_outcome} 추이')
     plt.tight_layout()
     plt.show()`,
           r: `library(ggplot2)

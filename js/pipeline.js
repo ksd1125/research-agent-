@@ -70,37 +70,67 @@ export function getDocResult() { return state.docResult; }
  * mock 데이터 CSV는 name_en을 컬럼명으로 사용하므로, steps.js 코드 템플릿에
  * 영문명이 들어가야 KeyError가 발생하지 않음
  *
+ * 4-K 강화: 4-tier 매핑 + Agent4+ dependent_var/key_independent_var 강제 매핑
+ * + 영문명 검증 (한국어 문자가 남아 있으면 경고 + 최종 폴백)
+ *
  * @param {Object} method — Agent1의 detected_method (원본은 변경하지 않음)
- * @param {Object|null} dataStructure — Agent4+의 결과 ({ variables: [...] })
+ * @param {Object|null} dataStructure — Agent4+의 결과 ({ variables: [...], dependent_var, key_independent_var })
  * @returns {Object} — key_variables가 영문명으로 치환된 method 복사본
  */
 function resolveVariableNames(method, dataStructure) {
-  if (!method?.key_variables || !dataStructure?.variables?.length) {
-    return method;
-  }
+  if (!method?.key_variables) return method;
 
-  const vars = dataStructure.variables;
+  // dataStructure가 없어도 기본 폴백은 수행
+  const vars = dataStructure?.variables || [];
+
+  // Agent4+가 직접 명시한 종속/독립 변수 (가장 신뢰도 높음)
+  const agent4DepVar = dataStructure?.dependent_var || null;
+  const agent4IndepVar = dataStructure?.key_independent_var || null;
 
   /**
    * 한국어 변수명에 가장 가까운 Agent4+ 변수의 name_en을 반환
    * 1차: name_kr 정확 일치
-   * 2차: name_kr가 한국어명을 포함하거나, 한국어명이 name_kr를 포함
-   * 3차: role 기반 폴백 (outcome → role이 '종속' 포함, treatment → role이 '독립'/'처리' 포함)
+   * 2차: name_kr 부분 일치 (양방향)
+   * 3차: name_en 부분 일치 (Agent1이 영문명을 줬을 수 있음)
+   * 4차: role 기반 폴백
+   * 5차: Agent4+ dependent_var / key_independent_var 강제 매핑
    */
   function findEnglishName(koreanName, role) {
     if (!koreanName) return koreanName;
 
-    // 1차: 정확 일치
+    // 이미 순수 영문이면 그대로 반환 (name_en과 일치할 가능성 높음)
+    if (/^[a-zA-Z0-9_]+$/.test(koreanName)) {
+      // 다만 실제 컬럼에 있는지 확인
+      const existsInVars = vars.find(v => v.name_en === koreanName);
+      if (existsInVars) return koreanName;
+      // 부분 일치 시도
+      const partialEn = vars.find(v => v.name_en &&
+        (v.name_en.toLowerCase().includes(koreanName.toLowerCase()) ||
+         koreanName.toLowerCase().includes(v.name_en.toLowerCase()))
+      );
+      if (partialEn?.name_en) return partialEn.name_en;
+    }
+
+    // 1차: name_kr 정확 일치
     const exact = vars.find(v => v.name_kr === koreanName);
     if (exact?.name_en) return exact.name_en;
 
-    // 2차: 부분 일치 (양방향)
+    // 2차: name_kr 부분 일치 (양방향)
     const partial = vars.find(v =>
       v.name_kr && (v.name_kr.includes(koreanName) || koreanName.includes(v.name_kr))
     );
     if (partial?.name_en) return partial.name_en;
 
-    // 3차: role 기반 폴백
+    // 3차: name_en 부분 일치 (한국어명에 영문이 섞여있는 경우)
+    const englishPart = koreanName.match(/[a-zA-Z_]+/g)?.join('') || '';
+    if (englishPart.length >= 2) {
+      const enMatch = vars.find(v =>
+        v.name_en && v.name_en.toLowerCase().includes(englishPart.toLowerCase())
+      );
+      if (enMatch?.name_en) return enMatch.name_en;
+    }
+
+    // 4차: role 기반 폴백
     if (role === 'outcome') {
       const byRole = vars.find(v =>
         v.role && (v.role.includes('종속') || v.role.includes('결과') || v.role === 'dependent')
@@ -111,6 +141,16 @@ function resolveVariableNames(method, dataStructure) {
         v.role && (v.role.includes('독립') || v.role.includes('처리') || v.role.includes('핵심') || v.role === 'independent')
       );
       if (byRole?.name_en) return byRole.name_en;
+    }
+
+    // 5차: Agent4+ 직접 지정 변수로 강제 매핑 (최종 폴백)
+    if (role === 'outcome' && agent4DepVar) {
+      console.warn(`[변수명 매핑] outcome '${koreanName}' 매핑 실패 → Agent4+ dependent_var '${agent4DepVar}' 사용`);
+      return agent4DepVar;
+    }
+    if (role === 'treatment' && agent4IndepVar) {
+      console.warn(`[변수명 매핑] treatment '${koreanName}' 매핑 실패 → Agent4+ key_independent_var '${agent4IndepVar}' 사용`);
+      return agent4IndepVar;
     }
 
     // 매핑 실패: 원본 반환
@@ -137,9 +177,19 @@ function resolveVariableNames(method, dataStructure) {
 
   resolved.key_variables = kv;
 
+  // 4-K: 영문명 검증 — 한국어 문자가 남아 있으면 경고
+  const hasKorean = /[가-힣]/;
+  if (hasKorean.test(kv.outcome)) {
+    console.warn(`[변수명 매핑] ⚠️ outcome에 한국어 잔존: '${kv.outcome}' → steps.js에서 런타임 폴백 필요`);
+  }
+  if (hasKorean.test(kv.treatment)) {
+    console.warn(`[변수명 매핑] ⚠️ treatment에 한국어 잔존: '${kv.treatment}' → steps.js에서 런타임 폴백 필요`);
+  }
+
   console.log('[변수명 매핑]', {
     original: method.key_variables,
     resolved: kv,
+    agent4Hints: { dependent_var: agent4DepVar, key_independent_var: agent4IndepVar },
   });
 
   return resolved;

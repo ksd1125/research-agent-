@@ -221,10 +221,105 @@ function clamp(val, min, max) {
 }
 
 /**
+ * Sprint 2-F: Agent4+의 한글/영문 혼용 type을 영문 표준형으로 정규화
+ * @param {string} rawType — Agent4+ 응답의 type 값 (한글 또는 영문)
+ * @returns {string} — 정규화된 영문 type: 'continuous'|'binary'|'categorical'|'ordinal'|'time'|'id'
+ */
+function normalizeVarType(rawType) {
+  if (!rawType) return 'continuous';
+  const t = rawType.trim().toLowerCase();
+
+  // 영문 직접 매칭
+  if (['continuous', 'binary', 'categorical', 'ordinal', 'time', 'id'].includes(t)) return t;
+
+  // 한글 → 영문 매핑
+  const korMap = {
+    '연속': 'continuous', '연속형': 'continuous',
+    '이진': 'binary', '이진형': 'binary', '더미': 'binary',
+    '범주': 'categorical', '범주형': 'categorical', '명목': 'categorical',
+    '순서': 'ordinal', '순서형': 'ordinal', '서열': 'ordinal',
+    '시간': 'time', '시계열': 'time',
+    '식별': 'id', '식별자': 'id',
+  };
+  if (korMap[t]) return korMap[t];
+
+  // 부분 일치 폴백
+  if (t.includes('연속') || t.includes('contin')) return 'continuous';
+  if (t.includes('이진') || t.includes('binar') || t.includes('더미') || t.includes('dummy')) return 'binary';
+  if (t.includes('범주') || t.includes('categ') || t.includes('명목') || t.includes('nomin')) return 'categorical';
+  if (t.includes('순서') || t.includes('ordin') || t.includes('서열') || t.includes('likert')) return 'ordinal';
+
+  return 'continuous'; // 최종 폴백
+}
+
+/**
+ * Sprint 2-F: role과 이름 기반으로 type을 자동 추론
+ * Agent4+가 type을 누락했거나 'continuous'로만 지정한 경우 보강
+ * @param {Object} v — 변수 객체 { name_en, name_kr, role, type, categories, levels }
+ * @returns {string} — 추론된 type
+ */
+function inferTypeFromRole(v) {
+  const role = (v.role || '').toLowerCase();
+  const name = (v.name_en || v.name_kr || '').toLowerCase();
+
+  // role 기반 추론
+  if (role.includes('treatment') || role.includes('처리') || role.includes('정책')) return 'binary';
+  if (role.includes('고정효과') || role.includes('fixed') || role === 'entity' || role === 'time') return 'id';
+  if (role.includes('층화') || role.includes('blocking') || role.includes('factor')) return 'categorical';
+
+  // categories/levels가 있으면 범주형
+  if (v.categories && v.categories.length > 0) return 'categorical';
+  if (v.levels && v.levels.length > 0) return 'categorical';
+
+  // 이름 기반 추론
+  if (name.includes('dummy') || name.includes('더미') || name.includes('_yn') || name.includes('_flag')) return 'binary';
+  if (name.includes('gender') || name.includes('성별') || name.includes('sex')) return 'binary';
+  if (name.includes('region') || name.includes('지역') || name.includes('industry') || name.includes('산업') || name.includes('sector')) return 'categorical';
+  if (name.includes('group') || name.includes('그룹') || name.includes('type') || name.includes('유형') || name.includes('종류')) return 'categorical';
+  if (name.includes('satisf') || name.includes('만족') || name.includes('likert') || name.includes('척도')) return 'ordinal';
+  if (name.includes('level') || name.includes('수준') || name.includes('등급') || name.includes('grade')) return 'ordinal';
+
+  return null; // 추론 불가 → 원래 type 유지
+}
+
+/**
+ * Sprint 2-F: 변수 객체의 type을 정규화하고, categories/levels를 통합
+ * generateMockData 진입 시 모든 변수에 적용
+ * @param {Object} v — 변수 객체 (원본 변경)
+ * @returns {Object} — type이 정규화된 변수 객체
+ */
+function normalizeVariable(v) {
+  // 1. type 정규화 (한글→영문)
+  v.type = normalizeVarType(v.type);
+
+  // 2. type이 기본값(continuous)이면 role/이름 기반 추론 시도
+  if (v.type === 'continuous') {
+    const inferred = inferTypeFromRole(v);
+    if (inferred) {
+      console.log(`[변수 타입 추론] '${v.name_en || v.name_kr}': continuous → ${inferred} (role='${v.role}')`);
+      v.type = inferred;
+    }
+  }
+
+  // 3. categories/levels 통합: levels가 있고 categories가 없으면 복사
+  if (!v.categories && v.levels) {
+    v.categories = v.levels;
+  }
+  // categories가 문자열이면 배열로 변환
+  if (typeof v.categories === 'string') {
+    v.categories = v.categories.split(/[,，]\s*/);
+  }
+
+  return v;
+}
+
+/**
  * 변수의 type과 role에 따라 합리적인 기술통계 추정값 생성
  * Agent 4+가 mean/sd를 추출하지 못했을 때 사용
+ * Sprint 2-F: normalizeVarType 적용 + role 기반 추론 강화
  */
 function estimateVariableStats(v) {
+  // Sprint 2-F: 정규화된 type 사용 (normalizeVariable 후 호출되므로 영문 보장)
   const type = (v.type || 'continuous').toLowerCase();
   const role = (v.role || '').toLowerCase();
   const name = (v.name_en || '').toLowerCase();
@@ -234,7 +329,8 @@ function estimateVariableStats(v) {
     return { mean: Math.round(p * 100) / 100, sd: Math.round(Math.sqrt(p * (1 - p)) * 100) / 100, min: 0, max: 1 };
   }
   if (type === 'categorical') {
-    const nLevels = (v.levels && v.levels.length) || 3;
+    // Sprint 2-F: categories 배열 우선 참조
+    const nLevels = (v.categories && v.categories.length) || (v.levels && v.levels.length) || 3;
     return { mean: null, sd: null, min: 1, max: nLevels };
   }
   if (type === 'ordinal') {
@@ -242,6 +338,12 @@ function estimateVariableStats(v) {
     const hi = v.max != null ? v.max : 5;
     return { mean: Math.round((lo + hi) / 2 * 100) / 100, sd: Math.round((hi - lo) / 4 * 100) / 100, min: lo, max: hi };
   }
+  // ID/time 타입은 자동 생성 대상 아님 — 패널 구조에서 별도 처리
+  if (type === 'id' || type === 'time') {
+    return { mean: null, sd: null, min: null, max: null };
+  }
+
+  // continuous: 이름 기반 휴리스틱
   if (name.includes('age') || name.includes('연령')) return { mean: 42, sd: 12, min: 18, max: 80 };
   if (name.includes('income') || name.includes('revenue') || name.includes('sales') || name.includes('wage') || name.includes('소득') || name.includes('매출'))
     return { mean: 3500, sd: 2000, min: 0, max: 15000 };
@@ -253,8 +355,9 @@ function estimateVariableStats(v) {
   if (name.includes('cost') || name.includes('price') || name.includes('amount') || name.includes('비용') || name.includes('가격')) return { mean: 500, sd: 300, min: 0, max: 3000 };
   if (name.includes('duration') || name.includes('time') || name.includes('period') || name.includes('기간')) return { mean: 12, sd: 6, min: 1, max: 48 };
   if (name.includes('satisf') || name.includes('만족') || name.includes('likert')) return { mean: 3.5, sd: 0.9, min: 1, max: 5 };
-  if (role.includes('dependent') || role.includes('outcome') || role.includes('target')) return { mean: 50, sd: 20, min: 0, max: 100 };
-  if (role.includes('treatment') || role.includes('factor')) return { mean: 0.5, sd: 0.5, min: 0, max: 1 };
+  // role 기반 폴백 (한글 role도 지원)
+  if (role.includes('dependent') || role.includes('outcome') || role.includes('target') || role.includes('종속') || role.includes('결과')) return { mean: 50, sd: 20, min: 0, max: 100 };
+  if (role.includes('treatment') || role.includes('factor') || role.includes('처리') || role.includes('독립')) return { mean: 0.5, sd: 0.5, min: 0, max: 1 };
   return { mean: 30, sd: 15, min: 0, max: 100 };
 }
 
@@ -266,13 +369,15 @@ function estimateVariableStats(v) {
  * @param {number} [n=500] — 생성할 관측치 수 (기본 500행)
  * @returns {{ csv: string, data: Array<Object>, variables: Array }}
  */
-export function generateMockData(stats, n = 500, category = null) {
+export function generateMockData(stats, n = 500, category = null, requiredVars = {}) {
   const sampleSize = n || 500;
-  const variables = stats.variables || [];
 
-  if (variables.length === 0) {
+  if (!(stats.variables || []).length) {
     throw new Error('변수 정보가 없습니다. 논문 분석을 먼저 진행해주세요.');
   }
+
+  // Sprint 2-F: 원본 stats.variables 불변 유지 — 얕은 복사 후 type 정규화 + role 기반 추론
+  const variables = (stats.variables || []).map(v => normalizeVariable({ ...v }));
 
   // 패널 데이터 카테고리일 때 entity_id/year 자동 추가 (이슈 19)
   const isPanelCategory = category === 'causal_inference' || category === 'panel';
@@ -317,7 +422,9 @@ export function generateMockData(stats, n = 500, category = null) {
           if (t === 'binary') {
             row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
           } else if (t === 'categorical' || t === '범주') {
-            const cats = v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
+            // Sprint 2-F: categories 배열/문자열 통합 처리
+            const cats = Array.isArray(v.categories) ? v.categories
+                       : v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
                        : (levels && levels.length > 0) ? levels : null;
             if (cats && cats.length > 0) {
               row[name_en] = cats[Math.floor(Math.random() * cats.length)];
@@ -396,8 +503,9 @@ export function generateMockData(stats, n = 500, category = null) {
       if (t === 'binary') {
         row[name_en] = Math.random() < (mean || 0.5) ? 1 : 0;
       } else if (t === 'categorical' || t === '범주') {
-        // categories 필드 또는 levels 필드에서 카테고리 목록 사용
-        const cats = v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
+        // Sprint 2-F: categories 배열/문자열 통합 처리
+        const cats = Array.isArray(v.categories) ? v.categories
+                   : v.categories ? String(v.categories).split(/[,，;；]/).map(s => s.trim()).filter(Boolean)
                    : (levels && levels.length > 0) ? levels
                    : null;
         if (cats && cats.length > 0) {
@@ -419,7 +527,36 @@ export function generateMockData(stats, n = 500, category = null) {
     data.push(row);
   }
 
-  // 3단계: CSV 생성
+  // 3단계: 필수 변수 검증 및 자동 보완 (4-J)
+  const headerSet = new Set(enrichedVars.map(v => v.name_en));
+
+  // Agent4+ 결과의 dependent_var / key_independent_var 또는 외부 전달 requiredVars 사용
+  const depVar = requiredVars.outcome || stats.dependent_var || null;
+  const indepVar = requiredVars.treatment || stats.key_independent_var || null;
+
+  if (depVar && !headerSet.has(depVar)) {
+    console.warn(`[mockdata] 필수 종속변수 '${depVar}' 미존재 → 자동 추가`);
+    const outcomeVar = { name_kr: depVar, name_en: depVar, role: '종속', type: 'continuous' };
+    const est = estimateVariableStats(outcomeVar);
+    Object.assign(outcomeVar, est);
+    enrichedVars.push(outcomeVar);
+    data.forEach(row => { row[depVar] = Math.round(normalRandom(est.mean, est.sd) * 100) / 100; });
+  }
+
+  if (indepVar && !headerSet.has(indepVar)) {
+    console.warn(`[mockdata] 필수 독립변수 '${indepVar}' 미존재 → 자동 추가 (binary)`);
+    const treatVar = { name_kr: indepVar, name_en: indepVar, role: '독립', type: 'binary' };
+    enrichedVars.push(treatVar);
+    data.forEach(row => { row[indepVar] = Math.random() < 0.5 ? 1 : 0; });
+  }
+
+  // role 기반 필수 검증: 종속변수/독립변수 role이 있는 변수가 하나도 없으면 경고
+  const hasDep = enrichedVars.some(v => v.role && (v.role.includes('종속') || v.role === 'dependent'));
+  const hasIndep = enrichedVars.some(v => v.role && (v.role.includes('독립') || v.role.includes('처리') || v.role === 'independent'));
+  if (!hasDep) console.warn('[mockdata] 경고: 종속변수 role 없음 — 분석 코드 실행 시 오류 가능');
+  if (!hasIndep) console.warn('[mockdata] 경고: 독립변수 role 없음 — 분석 코드 실행 시 오류 가능');
+
+  // 4단계: CSV 생성
   const headers = enrichedVars.map(v => v.name_en);
   const csvRows = [headers.join(',')];
   for (const row of data) {
