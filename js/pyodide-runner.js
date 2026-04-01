@@ -90,12 +90,37 @@ async function _doInit(onProgress) {
     }
   }
 
-  // matplotlib 백엔드 설정 (Agg — 비대화형, PNG 출력)
+  // matplotlib 백엔드 설정 (Agg — 비대화형, PNG 출력) + 한글 폰트
+  report('🔤 한글 폰트 설정 중...');
   await pyodide.runPythonAsync(`
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import io, base64
+import matplotlib.font_manager as fm
+import io, base64, os
+
+# 한글 폰트 다운로드 및 등록 (NanumGothic)
+_font_url = "https://cdn.jsdelivr.net/gh/googlefonts/nanum@master/fonts/NanumGothic-Regular.ttf"
+_font_path = "/tmp/NanumGothic-Regular.ttf"
+
+try:
+    from pyodide.http import pyfetch
+    import asyncio
+    async def _download_font():
+        resp = await pyfetch(_font_url)
+        data = await resp.bytes()
+        with open(_font_path, 'wb') as f:
+            f.write(data)
+    await _download_font()
+
+    fm.fontManager.addfont(_font_path)
+    plt.rcParams['font.family'] = 'NanumGothic'
+    plt.rcParams['axes.unicode_minus'] = False
+    print("[폰트] NanumGothic 로드 완료")
+except Exception as e:
+    # 폰트 로드 실패 시 기본 sans-serif 사용 (한글 깨질 수 있음)
+    plt.rcParams['axes.unicode_minus'] = False
+    print(f"[폰트] NanumGothic 로드 실패: {e}")
 `);
 
   report('✅ Python 환경 준비 완료');

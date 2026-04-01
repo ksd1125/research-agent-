@@ -234,8 +234,13 @@ APA Figure caption (한국어): 예) Figure 1. 집단 간 직무 만족도 평�
 
   try {
     const raw = await callGemini(apiKey, prompt, 2000);
-    return parseApaReport(raw);
-  } catch {
+    const result = parseApaReport(raw);
+    if (!result.text) {
+      console.warn('[APA] 파싱 결과 비어있음. raw 응답:', raw?.substring(0, 200));
+    }
+    return result;
+  } catch (err) {
+    console.error('[APA] 보고서 생성 실패:', err);
     return { text: '', tableCaption: '', figureCaption: '' };
   }
 }
@@ -247,11 +252,22 @@ function parseApaReport(raw) {
     return match ? match[1].trim() : '';
   };
 
-  return {
-    text: extract('===APA_TEXT===', '===END_APA_TEXT==='),
-    tableCaption: extract('===TABLE_CAPTION===', '===END_TABLE_CAPTION==='),
-    figureCaption: extract('===FIGURE_CAPTION===', '===END_FIGURE_CAPTION==='),
-  };
+  let text = extract('===APA_TEXT===', '===END_APA_TEXT===');
+  const tableCaption = extract('===TABLE_CAPTION===', '===END_TABLE_CAPTION===');
+  const figureCaption = extract('===FIGURE_CAPTION===', '===END_FIGURE_CAPTION===');
+
+  // 구분자 파싱 실패 시 전체 응답을 APA 텍스트로 사용 (fallback)
+  if (!text && raw && raw.length > 20) {
+    // 코드펜스 제거
+    let cleaned = raw.replace(/```[\w]*\n?/g, '').replace(/```/g, '').trim();
+    // 구분자 태그 제거
+    cleaned = cleaned.replace(/===\w+===/g, '').trim();
+    if (cleaned.length > 10) {
+      text = cleaned;
+    }
+  }
+
+  return { text, tableCaption, figureCaption };
 }
 
 /* ============================================================

@@ -845,6 +845,11 @@ async function generateAndRenderApaReport(stepIdx, stdout, images) {
       html += '</div>';
     }
 
+    // 모든 섹션이 비어있으면 안내 메시지
+    if (!apa.text && !apa.tableCaption && !apa.figureCaption) {
+      html += '<div class="apa-text-section"><p style="color:#7f8c8d;">APA 보고서 생성에 실패했습니다. 분석 결과가 충분하지 않거나 API 응답이 비어있을 수 있습니다.</p></div>';
+    }
+
     html += '</div>';
     reportDiv.innerHTML = html;
   } catch (error) {
