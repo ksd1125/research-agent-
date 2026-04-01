@@ -3,199 +3,105 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ResearchMethodAgent v5.0</title>
+  <title>ResearchMethodAgent v4.0</title>
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <!-- Pyodide: 브라우저 내 Python 실행 (WebAssembly) -->
-  <link rel="preload" href="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js" as="script">
-  <link rel="preload" href="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.asm.wasm" as="fetch" crossorigin>
-  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
 </head>
 <body>
-  <div class="container">
-    <!-- Header -->
-    <div class="header">
-      <div class="header-content">
-        <div class="header-title">ResearchMethodAgent</div>
-        <div class="header-badge">ResearchMethodAgent v5.0 · Gemini 2.5 Flash</div>
-      </div>
+
+  <!-- ===== 헤더 ===== -->
+  <header class="hdr">
+    <div class="badge">ResearchMethodAgent v4.0 · Gemini 2.5 Flash</div>
+    <h1 class="hdr-title">도메인 인지형 에이전트 파이프라인</h1>
+    <p class="hdr-sub">문서 맥락 파악 → 맞춤형 통계 분석 → 타겟 결과 재현 코딩 &nbsp;|&nbsp; Google Gemini 2.5 Flash</p>
+  </header>
+
+  <!-- ===== 환경 설정 ===== -->
+  <section class="card" id="config-card">
+    <div class="card-title">환경 설정</div>
+    <input type="password" id="api-key" placeholder="Google AI Studio API Key (AIza...) — aistudio.google.com 에서 무료 발급">
+    <p class="form-hint">※ 무료 티어: 분당 15회 / 하루 1,500회 · 신용카드 불필요</p>
+  </section>
+
+  <!-- ===== 입력 ===== -->
+  <section class="card" id="input-card">
+    <div class="card-title">분석할 논문 발췌본 입력</div>
+
+    <!-- 탭 -->
+    <div class="tab-bar">
+      <button class="tab active" id="tab-text">📝 텍스트 붙여넣기 (권장)</button>
+      <button class="tab" id="tab-pdf">📄 PDF 업로드</button>
     </div>
 
-    <!-- Config Card -->
-    <div class="config-card" id="config-card">
-      <!-- API Key Section (접기/펴기) -->
-      <div class="config-section">
-        <div class="api-key-header" id="api-key-header">
-          <label class="config-label" style="margin-bottom:0">🔑 API 키</label>
-          <span class="api-key-status" id="api-key-status"></span>
-          <button class="btn-toggle" id="api-key-toggle">설정</button>
-        </div>
-        <div class="api-key-body" id="api-key-body" style="display:none">
-          <div class="api-key-input-wrap">
-            <input type="password" id="api-key-input" class="api-key-input" placeholder="Gemini API 키를 입력하세요">
-            <button class="btn-save-key" id="save-key-btn">저장</button>
-          </div>
-          <div class="api-key-hint">Google AI Studio에서 발급받은 API 키를 입력하세요. 키는 브라우저에 저장됩니다.</div>
-        </div>
-      </div>
-
-      <!-- PDF Upload Section -->
-      <div class="config-section">
-        <label class="config-label">PDF 업로드</label>
-        <div class="file-input-wrapper">
-          <input type="file" id="pdf-file" accept=".pdf" style="display:none">
-          <button class="btn-upload" id="upload-btn">📄 PDF 선택</button>
-          <span class="file-name" id="file-name">파일을 선택해주세요</span>
-        </div>
-      </div>
+    <!-- 텍스트 패널 -->
+    <div id="panel-text">
+      <textarea id="txt-input" placeholder="여기에 심리학, 경제학, 빅데이터 등의 논문 텍스트를 붙여넣으세요. (에이전트가 도메인을 스스로 파악합니다)"></textarea>
     </div>
 
-    <!-- Input Card -->
-    <div class="input-card" id="input-card" style="display:none">
-      <div class="input-section">
-        <label class="input-label">분석 대상 섹션</label>
-        <div class="section-selector" id="section-selector"></div>
+    <!-- PDF 패널 -->
+    <div id="panel-pdf" style="display:none">
+      <div class="upload-area" id="drop-zone">
+        <div class="upload-icon">📄</div>
+        <div class="upload-title">PDF 클릭 또는 드래그</div>
+        <div class="upload-sub">논문 PDF를 업로드하면 자동으로 텍스트를 추출합니다</div>
+        <input type="file" id="pdf-file" accept=".pdf" style="display:none">
       </div>
-      <button class="btn-analyze" id="analyze-btn">🚀 분석 시작</button>
+      <div id="pdf-name" class="text-xs text-primary mb-6" style="display:none"></div>
+      <div id="pdf-extract-status" class="text-xs text-muted mb-6" style="display:none"></div>
     </div>
 
-    <!-- Loading Card -->
-    <div class="loading-card" id="loading-card" style="display:none">
-      <div class="loading-header">분석 중...</div>
-      <div class="loading-steps">
-        <div class="loading-step" data-step="0">
-          <div class="loading-step-icon">⏳</div>
-          <div class="loading-step-text">PDF→MD</div>
+    <!-- 상태 메시지 -->
+    <div id="status-msg" class="status-msg"></div>
+
+    <!-- 실행 버튼 -->
+    <button class="btn-primary" id="run-btn">🚀 도메인 맞춤형 파이프라인 실행</button>
+  </section>
+
+  <!-- ===== 로딩 (Enhanced) ===== -->
+  <section class="card" id="loading-card" style="display:none">
+    <div class="loading-wrap">
+      <!-- 에이전트 진행 스텝 -->
+      <div class="agent-steps" id="agent-steps">
+        <div class="agent-step" id="step-agent1" data-step="1">
+          <div class="agent-icon">🔍</div>
+          <div class="agent-label">문서 분석</div>
         </div>
-        <div class="loading-step" data-step="1">
-          <div class="loading-step-icon">⏳</div>
-          <div class="loading-step-text">문서 분석</div>
+        <div class="agent-step" id="step-agent2" data-step="2">
+          <div class="agent-icon">📊</div>
+          <div class="agent-label">통계 해석</div>
         </div>
-        <div class="loading-step" data-step="2">
-          <div class="loading-step-icon">⏳</div>
-          <div class="loading-step-text">데이터 구조</div>
+        <div class="agent-step" id="step-agent3" data-step="3">
+          <div class="agent-icon">💻</div>
+          <div class="agent-label">코드 생성</div>
+        </div>
+        <div class="agent-step" id="step-agent4" data-step="4">
+          <div class="agent-icon">🧪</div>
+          <div class="agent-label">데이터 생성</div>
         </div>
       </div>
-      <div class="loading-message" id="loading-message">처리 중입니다...</div>
+      <!-- 프로그레스 바 -->
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <div class="loading-msg" id="loading-msg">파이프라인 준비 중...</div>
+      <div class="loading-tip" id="loading-tip" style="display:none"></div>
     </div>
+  </section>
 
-    <!-- Result Wrap -->
-    <div class="result-wrap" id="result-wrap" style="display:none">
-      <!-- Paper Info -->
-      <div class="paper-info">
-        <div class="paper-title" id="r-title">—</div>
-        <div class="paper-meta" id="r-meta">—</div>
-        <div class="context-tags" id="r-context"></div>
-      </div>
-
-      <!-- 4-Tab Bar -->
-      <div class="result-tab-bar" id="result-tab-bar">
-        <button class="result-tab active" data-panel="dataview">📋 논문 개요 & 데이터</button>
-        <button class="result-tab" data-panel="practice">🔬 분석 실습</button>
-        <button class="result-tab" data-panel="review">📖 리뷰 & 대안</button>
-        <button class="result-tab" data-panel="qna">💬 Q&A</button>
-      </div>
-
-      <!-- Method Nav (shared across tabs 2,3) -->
-      <div class="method-nav" id="method-nav"></div>
-
-      <!-- Panel 1: 논문 개요 & 데이터 구조 -->
-      <div class="result-panel active" id="panel-dataview">
-        <div class="panel-window">
-          <div class="panel-window-header">
-            <span class="panel-window-icon">📋</span>
-            <span class="panel-window-title">논문 개요 & 데이터 구조</span>
-          </div>
-          <div class="panel-window-body">
-            <!-- Section Index -->
-            <div id="section-index" class="section-index-wrap"></div>
-
-            <!-- Data Structure Card -->
-            <div id="data-structure-card" class="data-structure-card" style="margin-top:14px">
-              <div class="section-title">📊 데이터 구조</div>
-              <div id="data-structure-desc" class="desc-box mb-8"></div>
-              <div id="variable-table-wrap"></div>
-              <div id="data-preview-wrap" style="margin-top:10px"></div>
-              <div style="margin-top:10px">
-                <button class="btn-mockdata" id="gen-mockdata-btn">🧪 실습 데이터 생성</button>
-                <button class="btn-upload-csv" id="upload-csv-btn">📤 내 CSV 업로드</button>
-                <input type="file" id="csv-file-input" accept=".csv" style="display:none">
-                <button class="btn-download" id="download-csv-btn" style="display:none">📥 CSV 다운로드</button>
-              </div>
-              <div id="mockdata-status" style="margin-top:8px"></div>
-              <div id="data-preview" style="display:none;margin-top:12px"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Panel 2: 분석 실습 (Step-by-Step) -->
-      <div class="result-panel" id="panel-practice">
-        <div class="panel-window">
-          <div class="panel-window-header">
-            <span class="panel-window-icon">🔬</span>
-            <span class="panel-window-title">분석 실습</span>
-          </div>
-          <div class="panel-window-body">
-            <!-- Language Toggle -->
-            <div class="code-lang-bar" id="practice-lang-bar">
-              <button class="code-lang-tab active" data-lang="python">Python</button>
-              <button class="code-lang-tab" data-lang="r">R</button>
-            </div>
-            <!-- Steps will be dynamically inserted here -->
-            <div id="practice-steps"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Panel 3: 리뷰 & 대안 방법론 -->
-      <div class="result-panel" id="panel-review">
-        <div class="panel-window">
-          <div class="panel-window-header">
-            <span class="panel-window-icon">📖</span>
-            <span class="panel-window-title">리뷰 & 대안 방법론</span>
-          </div>
-          <div class="panel-window-body">
-            <!-- Sub-tabs for review sections -->
-            <div class="interpret-sub-tabs" id="review-sub-tabs">
-              <button class="interpret-sub-tab active" data-sub="peer">🔍 동료 리뷰</button>
-              <button class="interpret-sub-tab" data-sub="alt">🚀 대안 방법론</button>
-              <button class="interpret-sub-tab" data-sub="future">💡 후속 연구</button>
-            </div>
-            <div id="review-peer" class="review-section active"></div>
-            <div id="review-alt" class="review-section"></div>
-            <div id="review-future" class="review-section"></div>
-            <!-- Generate Button -->
-            <button class="btn-interpret" id="review-generate-btn">📖 리뷰 & 대안 생성</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Panel 4: Q&A -->
-      <div class="result-panel" id="panel-qna">
-        <div class="panel-window panel-window--qna">
-          <div class="panel-window-header">
-            <span class="panel-window-icon">💬</span>
-            <span class="panel-window-title">논문 Q&A</span>
-          </div>
-          <div class="panel-window-body" id="qna-card">
-            <div class="text-xs text-muted mb-8">분석 방법이나 결과에 대해 질문하면 논문 맥락 기반으로 답변합니다. What-if 시나리오나 새로운 아이디어 제안도 가능합니다.</div>
-            <div id="qna-chat" class="qna-chat"></div>
-            <div class="qna-input-wrap">
-              <input type="text" id="qna-input" class="qna-input" placeholder="예: 통제변수를 제거하면 결과가 어떻게 바뀔까요?">
-              <button id="qna-send" class="btn-primary qna-send-btn">전송</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="result-actions">
-        <button class="home-link">← 새 논문 분석하기</button>
-        <button class="btn-print" id="print-btn">🖨️ 결과 인쇄</button>
-      </div>
+  <!-- ===== 결과 ===== -->
+  <div id="result-wrap" class="result-wrap">
+    <div class="paper-info">
+      <div class="paper-title" id="r-title">—</div>
+      <div class="paper-meta" id="r-meta">—</div>
+      <div class="context-tags" id="r-context"></div>
     </div>
+    <div class="method-nav" id="method-nav"></div>
+    <div id="method-blocks"></div>
+    <button class="home-link">← 새 논문 분석하기</button>
   </div>
 
+  <!-- ===== JS 모듈 ===== -->
   <script type="module" src="js/main.js"></script>
+
 </body>
 </html>
