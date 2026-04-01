@@ -18,9 +18,16 @@
 
   <!-- ===== 환경 설정 ===== -->
   <section class="card" id="config-card">
-    <div class="card-title">환경 설정</div>
-    <input type="password" id="api-key" placeholder="Google AI Studio API Key (AIza...) — aistudio.google.com 에서 무료 발급">
-    <p class="form-hint">※ 무료 티어: 분당 15회 / 하루 1,500회 · 신용카드 불필요</p>
+    <div class="card-header">
+      <div class="card-title">🔑 API 키</div>
+      <button class="btn-sm" id="api-key-toggle">설정</button>
+      <span id="api-key-status" class="api-key-status no-key">❌ 미설정</span>
+    </div>
+    <div id="api-key-body" style="display:none">
+      <input type="password" id="api-key-input" placeholder="Google AI Studio API Key (AIza...) — aistudio.google.com 에서 무료 발급">
+      <button class="btn-primary btn-sm" id="save-key-btn">저장</button>
+      <p class="form-hint">※ 무료 티어: 분당 15회 / 하루 1,500회 · 신용카드 불필요</p>
+    </div>
   </section>
 
   <!-- ===== 입력 ===== -->
@@ -90,13 +97,91 @@
 
   <!-- ===== 결과 ===== -->
   <div id="result-wrap" class="result-wrap">
+    <!-- 논문 정보 -->
     <div class="paper-info">
       <div class="paper-title" id="r-title">—</div>
       <div class="paper-meta" id="r-meta">—</div>
       <div class="context-tags" id="r-context"></div>
     </div>
+
+    <!-- 메소드 네비게이션 -->
     <div class="method-nav" id="method-nav"></div>
+
+    <!-- 메소드별 블록 (동적 생성) -->
     <div id="method-blocks"></div>
+
+    <!-- 결과 탭 바 -->
+    <div class="tab-bar result-tab-bar">
+      <button class="result-tab active" data-panel="overview">📋 논문 개요 & 데이터</button>
+      <button class="result-tab" data-panel="practice">🔬 분석 실습</button>
+      <button class="result-tab" data-panel="review">📝 리뷰 & 대안</button>
+      <button class="result-tab" data-panel="qna">💬 Q&A</button>
+    </div>
+
+    <!-- 탭 1: 논문 개요 & 데이터 -->
+    <div class="result-panel active" id="panel-overview">
+      <!-- 섹션 인덱스 (논문 구조) -->
+      <div id="section-index"></div>
+
+      <!-- 데이터 구조 -->
+      <div class="sub-card">
+        <div class="card-title">📊 데이터 구조</div>
+        <div id="data-structure-desc"></div>
+      </div>
+
+      <!-- 변수 테이블 -->
+      <div class="sub-card">
+        <div class="card-title">📋 변수 목록</div>
+        <div id="variable-table-wrap"></div>
+      </div>
+
+      <!-- Mock 데이터 -->
+      <div class="sub-card">
+        <div class="card-title">🧪 가상 데이터</div>
+        <div id="mockdata-status"></div>
+        <div class="btn-group">
+          <button class="btn-sm" id="gen-mockdata-btn">데이터 생성</button>
+          <button class="btn-sm" id="download-csv-btn" style="display:none">CSV 다운로드</button>
+          <button class="btn-sm" id="upload-csv-btn">CSV 업로드</button>
+          <input type="file" id="csv-file-input" accept=".csv" style="display:none">
+        </div>
+        <div id="data-preview"></div>
+      </div>
+    </div>
+
+    <!-- 탭 2: 분석 실습 -->
+    <div class="result-panel" id="panel-practice">
+      <div class="card">
+        <div class="card-title">🔬 분석 실습</div>
+        <div id="practice-steps"></div>
+      </div>
+    </div>
+
+    <!-- 탭 3: 리뷰 & 대안 -->
+    <div class="result-panel" id="panel-review">
+      <div class="card">
+        <div class="card-title">📝 동료 리뷰 & 대안 방법론</div>
+        <button class="btn-primary btn-sm" id="review-generate-btn">리뷰 생성</button>
+        <div id="review-peer"></div>
+        <div id="review-alt"></div>
+        <div id="review-future"></div>
+      </div>
+    </div>
+
+    <!-- 탭 4: Q&A -->
+    <div class="result-panel" id="panel-qna">
+      <div class="card">
+        <div class="card-title">💬 논문 Q&A</div>
+        <div id="qna-chat" class="qna-chat"></div>
+        <div class="qna-input-wrap">
+          <input type="text" id="qna-input" placeholder="논문에 대해 질문하세요...">
+          <button class="btn-primary btn-sm" id="qna-send">전송</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 하단 -->
+    <button class="btn-sm" id="print-btn">🖨️ 인쇄</button>
     <button class="home-link">← 새 논문 분석하기</button>
   </div>
 
