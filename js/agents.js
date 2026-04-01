@@ -1157,17 +1157,15 @@ ${paperText.substring(0, 15000)}
       "name_kr": "한국어 변수명",
       "name_en": "영문 변수명 (snake_case)",
       "role": "종속 | 독립 | 통제 | 도구 | 매개 | 조절 | 고정효과 | 분해 | 층화 | 기타",
-      "type": "continuous | binary | categorical | ordinal | time | id",
-      "mean": "평균 (논문에서 추출, 없으면 null). 주의: categorical/binary 변수는 mean/sd 대신 null 반환",
-      "sd": "표준편차 (논문에서 추출, 없으면 null). categorical은 null",
+      "type": "연속 | 이진 | 범주 | 순서 | 시간 | ID",
+      "mean": "평균 (논문에서 추출, 없으면 null). 주의: 범주형(범주) 변수는 mean/sd 대신 null 반환",
+      "sd": "표준편차 (논문에서 추출, 없으면 null). 범주형은 null",
       "min": "최솟값 (없으면 null)",
       "max": "최댓값 (없으면 null)",
-      "categories": "categorical 변수인 경우에만: JSON 배열로 각 카테고리 목록 (예: [\"1-9명\",\"10-49명\",\"50-299명\",\"300명+\"]). continuous/binary이면 null",
+      "categories": "범주형 변수인 경우에만: 각 카테고리 목록 (예: '1-9명, 10-49명, 50-299명, 300명+')  연속형이면 null",
       "description": "변수 설명 (15자 이내)"
     }
   ],
-  "dependent_var": "종속변수의 name_en 값 (variables 배열에서 role='종속'인 변수의 name_en). 여러 개면 주된 1개만",
-  "key_independent_var": "핵심 독립변수의 name_en 값 (variables 배열에서 role='독립'인 변수의 name_en). 여러 개면 주된 1개만",
   "structure_diagram": "데이터 구조를 텍스트로 도식화. 패널이면 'entity_id × year → treatment, outcome, controls', 실험이면 '집단(처리/통제) × 시점(사전/사후)' 등. 1~2줄.",
   "limitations": "이 데이터의 알려진 한계점 (1~2문장). 예: '가상 데이터는 원본의 기술통계를 기반으로 역산한 것이므로 변수 간 복잡한 상관구조가 완벽히 재현되지 않을 수 있습니다.'"
 }
@@ -1176,9 +1174,7 @@ ${paperText.substring(0, 15000)}
 - variables 배열에는 논문에서 식별 가능한 **모든 주요 변수** (최소 5개, 최대 15개)를 포함
 - 기술통계(mean, sd, min, max)는 논문의 Table 1(기술통계표)에서 직접 추출
 - 기술통계가 논문에 없으면 데이터 특성과 분야 지식으로 합리적으로 추정하고, 추정값에는 (추정) 표시
-- **type은 반드시 영문**: continuous, binary, categorical, ordinal, time, id 중 하나. 한글(연속, 이진 등) 절대 사용 금지
-- **categorical 변수**는 mean/sd를 null로 하고, categories 필드에 JSON 배열(["A","B","C"])로 카테고리 목록을 기술
-- **binary 변수**(0/1 더미)는 type을 "binary"로, 범주가 3개 이상이면 "categorical"로 구분
+- **범주형(범주) 변수**는 mean/sd를 null로 하고, categories 필드에 카테고리 목록을 기술
 - name_en은 코드에서 바로 사용할 수 있는 영문 snake_case로 작성
 
 role 분류 가이드 (반드시 아래 기준으로 분류):

@@ -229,12 +229,7 @@ export function renderInitialResult(docResult, dataStructure) {
     // === 자동 데이터 생성: dataStructure가 있으면 바로 500행 생성 ===
     if (dataStructure && dataStructure.variables && dataStructure.variables.length > 0) {
       try {
-        // 4-K: requiredVars로 핵심 변수 보장
-        const methods0 = getMethods();
-        const kv0 = methods0[0]?.key_variables || {};
-        mockDataCache = generateMockData(dataStructure, 500, ctx.analysis_category || null, {
-          outcome: kv0.outcome, treatment: kv0.treatment
-        });
+        mockDataCache = generateMockData(dataStructure, 500, ctx.analysis_category || null);
         const statusEl = $('mockdata-status');
         if (statusEl) {
           statusEl.innerHTML = `<p style="color: #27ae60;">✅ 데이터 자동 생성 완료 (${mockDataCache.data.length}행 × ${mockDataCache.variables.length}변수)</p>`;
@@ -610,41 +605,34 @@ async function executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx) {
 
     const result = await executeStep(methodIndex, stepId, code, lang);
 
-    // 4-P: 통합 서술 형식 결과 렌더링
-    let resultHtml = '<div class="step-execution-result integrated-narrative">';
+    // 결과 렌더링
+    let resultHtml = '<div class="step-execution-result">';
     let hasContent = false;
 
-    // 상단: 결과 요약 카드 (해석 + 논문 비교를 통합 서술로)
-    if (result.interpretation || result.paperComparison) {
-      resultHtml += '<div class="result-subsection narrative-summary" style="background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%); border-left: 4px solid #185FA5; padding: 16px; border-radius: 8px; margin-bottom: 12px;">';
-      resultHtml += '<h4 style="margin-top:0; color:#185FA5;">💡 분석 결과 해석</h4>';
-      if (result.interpretation) {
-        resultHtml += '<div class="interp-text">' + markdownToHtml(result.interpretation) + '</div>';
-      }
-      if (result.paperComparison) {
-        resultHtml += '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #c0c8d8;">';
-        resultHtml += '<strong style="color:#6b21a8;">📄 논문과의 비교:</strong> ';
-        resultHtml += markdownToHtml(result.paperComparison);
-        resultHtml += '</div>';
-      }
-      resultHtml += '</div>';
-      hasContent = true;
-    }
-
-    // 중단: 결과 테이블
     if (result.table) {
-      resultHtml += '<div class="result-subsection">';
-      resultHtml += '<h4>📊 분석 결과 테이블</h4>';
+      resultHtml += '<div class="result-subsection"><h4>📊 결과 테이블</h4>';
       resultHtml += renderResultTable(result.table);
       resultHtml += '</div>';
       hasContent = true;
     }
 
-    // 하단: 시각화 설명 (있으면)
     if (result.chartDesc) {
-      resultHtml += '<div class="result-subsection" style="background:#f8f9fa; padding:12px; border-radius:6px;">';
-      resultHtml += '<h4 style="margin-top:0;">📈 시각화 설명</h4>';
-      resultHtml += `<p style="margin:0;">${escapeHtml(result.chartDesc)}</p>`;
+      resultHtml += '<div class="result-subsection"><h4>📈 차트 설명</h4>';
+      resultHtml += `<p>${escapeHtml(result.chartDesc)}</p>`;
+      resultHtml += '</div>';
+      hasContent = true;
+    }
+
+    if (result.interpretation) {
+      resultHtml += '<div class="result-subsection"><h4>🔍 해석</h4>';
+      resultHtml += markdownToHtml(result.interpretation);
+      resultHtml += '</div>';
+      hasContent = true;
+    }
+
+    if (result.paperComparison) {
+      resultHtml += '<div class="result-subsection"><h4>📄 논문 비교</h4>';
+      resultHtml += markdownToHtml(result.paperComparison);
       resultHtml += '</div>';
       hasContent = true;
     }
@@ -718,12 +706,7 @@ async function executePythonStep(code, stepIdx) {
       if (ds && ds.variables && ds.variables.length > 0) {
         try {
           const pc = getPaperContext();
-          // 4-K: requiredVars로 핵심 변수 보장
-          const autoMethods = getMethods();
-          const autoKv = autoMethods[0]?.key_variables || {};
-          mockDataCache = generateMockData(ds, 500, pc?.analysis_category || null, {
-            outcome: autoKv.outcome, treatment: autoKv.treatment
-          });
+          mockDataCache = generateMockData(ds, 500, pc?.analysis_category || null);
           csvData = mockDataCache.csv;
           const statusEl = $('mockdata-status');
           if (statusEl) statusEl.innerHTML = `<p style="color: #27ae60;">✅ 실습용 데이터 자동 생성 (${mockDataCache.data.length}행 × ${mockDataCache.variables.length}변수)</p>`;
@@ -780,17 +763,6 @@ async function executePythonStep(code, stepIdx) {
     // 출력이 전혀 없을 때
     if ((!result.stdout || !result.stdout.trim()) && (!result.images || result.images.length === 0) && !result.error) {
       html += '<div class="result-subsection"><p>코드가 실행되었으나 출력이 없습니다.</p></div>';
-    }
-
-    // 4-O: Python 실행 후 자동 간략 해석 (API 호출 없이 패턴 분석)
-    if (result.stdout && result.stdout.trim() && !result.error) {
-      const autoInterp = generateAutoInterpretation(result.stdout);
-      if (autoInterp) {
-        html += '<div class="result-subsection auto-interpretation">';
-        html += '<h4>💡 자동 해석 (Quick Interpretation)</h4>';
-        html += `<div class="auto-interp-text">${autoInterp}</div>`;
-        html += '</div>';
-      }
     }
 
     // APA 보고서 생성 버튼 (stdout이 있을 때만)
@@ -879,72 +851,6 @@ async function generateAndRenderApaReport(stepIdx, stdout, images) {
     console.error('APA 보고서 생성 오류:', error);
     reportDiv.innerHTML = `<div class="pyodide-error">APA 보고서 생성 실패: ${escapeHtml(error.message)}</div>`;
   }
-}
-
-/**
- * 4-O: Python stdout 패턴 분석 기반 자동 간략 해석
- * API 호출 없이 정규식으로 주요 통계량을 감지하여 한국어 해석 생성
- * @param {string} stdout - Python 실행 출력
- * @returns {string|null} - HTML 형식 해석 텍스트, 감지 못하면 null
- */
-function generateAutoInterpretation(stdout) {
-  const findings = [];
-
-  // 1) 계수 + p-value 패턴 감지 (statsmodels summary 등)
-  // 예: "treatment  0.3456  0.0912  3.79  0.000"  또는  "계수: 0.3456, p-value: 0.000"
-  const coefPvalPatterns = [
-    /(?:계수|coef|Coef)[:\s]*([-\d.]+)[,\s]*(?:p-?value|P>[|]t[|]|Pr\(>)[:\s]*([\d.]+)/gi,
-    /(\w+)\s+([-\d.]+)\s+([\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+/g,  // tabular
-  ];
-  const pMatch = stdout.match(/(?:p-?value|P>[|]t[|]|Pr\(>)[:\s]*([\d.eE-]+)/i);
-  const coefMatch = stdout.match(/(?:계수|coef)[:\s]*([-\d.]+)/i);
-  if (coefMatch && pMatch) {
-    const coef = parseFloat(coefMatch[1]);
-    const pval = parseFloat(pMatch[1]);
-    const sig = pval < 0.01 ? '1% 수준에서 통계적으로 유의' :
-                pval < 0.05 ? '5% 수준에서 통계적으로 유의' :
-                pval < 0.10 ? '10% 수준에서 한계적으로 유의' :
-                '통계적으로 유의하지 않음';
-    const dir = coef > 0 ? '정(+)의 효과' : '부(-)의 효과';
-    findings.push(`핵심 독립변수의 계수는 <strong>${coef.toFixed(4)}</strong>으로 ${dir}를 보이며, ${sig}합니다 (p=${pval < 0.001 ? '<0.001' : pval.toFixed(3)}).`);
-  }
-
-  // 2) R² 감지
-  const r2Match = stdout.match(/R[²2-](?:squared)?[:\s]*([\d.]+)/i) ||
-                  stdout.match(/Adj\.?\s*R[²2-](?:squared)?[:\s]*([\d.]+)/i);
-  if (r2Match) {
-    const r2 = parseFloat(r2Match[1]);
-    const pct = (r2 * 100).toFixed(1);
-    const fit = r2 > 0.7 ? '높은 설명력' : r2 > 0.3 ? '보통 수준의 설명력' : '낮은 설명력';
-    findings.push(`모형의 R² = <strong>${r2.toFixed(4)}</strong>로, 종속변수 분산의 약 ${pct}%를 설명하며 ${fit}을 보입니다.`);
-  }
-
-  // 3) F-statistic 감지
-  const fMatch = stdout.match(/F[- ]?(?:statistic|stat)[:\s]*([\d.]+)/i);
-  const fProbMatch = stdout.match(/Prob\s*\(F[- ]?statistic\)[:\s]*([\d.eE-]+)/i);
-  if (fMatch) {
-    findings.push(`F-통계량 = ${parseFloat(fMatch[1]).toFixed(2)}${fProbMatch ? ` (p=${parseFloat(fProbMatch[1]) < 0.001 ? '<0.001' : parseFloat(fProbMatch[1]).toFixed(4)})` : ''}로 모형의 전체적 유의성이 확인됩니다.`);
-  }
-
-  // 4) 관측치 수 감지
-  const nMatch = stdout.match(/(?:Observations?|No\.\s*Observations?|관측치|총 관측치|행)[:\s]*(\d+)/i);
-  if (nMatch) {
-    findings.push(`분석에 사용된 관측치는 <strong>${nMatch[1]}</strong>개입니다.`);
-  }
-
-  // 5) 경고 메시지 감지
-  if (stdout.includes('⚠️') || stdout.includes('미발견')) {
-    const warnLines = stdout.split('\n').filter(l => l.includes('⚠️') || l.includes('미발견'));
-    if (warnLines.length > 0) {
-      findings.push(`<span style="color:#e67e22;">⚠️ 주의: ${escapeHtml(warnLines[0].trim())}</span>`);
-    }
-  }
-
-  if (findings.length === 0) return null;
-
-  return '<ul style="margin:0.5em 0;padding-left:1.2em;">' +
-    findings.map(f => `<li style="margin-bottom:0.3em;">${f}</li>`).join('') +
-    '</ul><p style="font-size:0.85em;color:#888;margin-top:0.5em;">* 가상 데이터 기반 결과입니다. 자세한 APA 보고서는 아래 버튼으로 생성하세요.</p>';
 }
 
 function updatePracticeStepsForLanguage(lang) {
@@ -1231,12 +1137,7 @@ function setupMockDataGeneration() {
 
         const dataStructure = getDataStructure();
         const pc = getPaperContext();
-        // 4-K: requiredVars로 핵심 변수 보장
-        const btnMethods = getMethods();
-        const btnKv = btnMethods[0]?.key_variables || {};
-        mockDataCache = generateMockData(dataStructure, 500, pc?.analysis_category || null, {
-          outcome: btnKv.outcome, treatment: btnKv.treatment
-        });
+        mockDataCache = generateMockData(dataStructure, 500, pc?.analysis_category || null);
         // mockDataCache = { csv, data, variables }
 
         if (mockDataStatus) {

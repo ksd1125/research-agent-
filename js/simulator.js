@@ -97,48 +97,12 @@ function parseSimulationResult(raw) {
     return match ? match[1].trim() : '';
   };
 
-  const result = {
+  return {
     table: extract('RESULT_TABLE'),
     chartDesc: extract('CHART_DESC'),
     interpretation: extract('INTERPRETATION'),
     paperComparison: extract('PAPER_COMPARISON'),
   };
-
-  // 4-Q: 파싱 강건화 — delimiter 매칭 실패 시 폴백
-  // interpretation이 빈데 전체 텍스트에 해석 내용이 있는 경우 복구 시도
-  if (!result.interpretation && stripped.length > 100) {
-    // 한국어 해석 패턴 탐색: "해석", "의미", "결과는", "시사" 등을 포함하는 문단
-    const interpPatterns = [
-      /(?:해석|분석 결과|의미|시사점|결론)[:\s]*([\s\S]{30,500}?)(?=\n\n|===|$)/i,
-      /(?:이 결과는|분석에 따르면|통계적으로)([\s\S]{30,400}?)(?=\n\n|===|$)/i,
-    ];
-    for (const pat of interpPatterns) {
-      const m = stripped.match(pat);
-      if (m) {
-        result.interpretation = m[0].trim();
-        console.log('[simulator] interpretation 폴백 파싱 성공');
-        break;
-      }
-    }
-  }
-
-  // table이 비어있으면 마크다운 테이블 패턴으로 폴백 탐색
-  if (!result.table && stripped.includes('|')) {
-    const tableMatch = stripped.match(/(\|[\s\S]*?\|[\s\S]*?\n(?:\|[-:| ]+\|\n)?(?:\|[\s\S]*?\|\n?)+)/);
-    if (tableMatch) {
-      result.table = tableMatch[1].trim();
-      console.log('[simulator] table 폴백 파싱 성공');
-    }
-  }
-
-  // 모든 필드가 빈 경우: 전체 텍스트를 interpretation으로 폴백
-  const hasContent = result.table || result.chartDesc || result.interpretation || result.paperComparison;
-  if (!hasContent && stripped.length > 50) {
-    result.interpretation = stripped.trim();
-    console.log('[simulator] 전체 응답을 interpretation으로 폴백');
-  }
-
-  return result;
 }
 
 /**
