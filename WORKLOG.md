@@ -6,10 +6,11 @@
 
 ---
 
-## 현재 상태 (2026-03-29 세션8 업데이트)
+## 현재 상태 (2026-04-01 세션9 업데이트)
 
 ### 프로젝트 위치
-- **작업 폴더**: `C:\Users\김수동\Desktop\cowork\PROJECTS\research-agent`
+- **작업 폴더**: `C:\Users\sudon\Desktop\cowork\work` (PC2)
+- **작업 폴더 (PC1)**: `C:\Users\김수동\Desktop\cowork\PROJECTS\research-agent`
 - **배포 URL**: https://ksd1125.github.io/research-agent-/
 - **리뷰 문서**: `C:\Users\김수동\Desktop\cowork\OUTPUTS\ResearchMethodAgent_Review`
 
@@ -162,17 +163,17 @@
 
 | 파일 | 최종 수정 | 상태 | 비고 |
 |------|-----------|------|------|
-| index.html | 03-29 세션8 | ✅ | Pyodide preload 힌트 추가 |
-| css/style.css | 03-26 | ✅ | v5 컴포넌트 스타일 전체 |
+| index.html | 03-30 세션9 | ✅ | 프린트 버튼 + result-actions 래퍼 추가 |
+| css/style.css | 03-30 세션9 | ✅ | result-actions + btn-print 스타일 + @media print 블록 추가 |
 | js/config.js | 03-29 세션7 | ✅ | agent4Plus 토큰 4000→8000 증가. 다음: maxMethods 2→3 (Sprint2) |
-| js/agents.js | 03-29 세션8 | ✅ | linearmodels 제거 + Sprint1 프롬프트 개선. **다음: Sprint2 responseSchema** |
+| js/agents.js | 04-01 세션9 | ✅ | Agent4+ correlation_matrix 추출 필드 추가 (Phase 6-A) |
 | js/pdf.js | 03-26 | 🔧 | 텍스트추출 + base64. **다음: Sprint2 폰트 기반 헤딩 감지 추가** |
-| js/pipeline.js | 03-29 세션8 | ✅ | context에 variableNames 추가 (이슈 17) |
-| js/ui.js | 03-29 세션8 | ✅ | 빈 결과 fallback 메시지 (이슈 15) + category 전달 (이슈 19) |
-| js/main.js | 03-29 세션8 | ✅ | Pyodide 사전 로딩 추가 (5초 후 백그라운드 초기화) |
+| js/pipeline.js | 04-01 세션9 | ✅ | analysis_design mediator/moderator 영문 매핑 추가 (Phase 6-B) |
+| js/ui.js | 03-30 세션9 | ✅ | 프린트 핸들러 + 홈 복귀에 resetState() 연동 |
+| js/main.js | 03-30 세션9 | ✅ | 중복 홈 핸들러(location.reload) 제거 |
 | js/simulator.js | 03-29 세션8 | ✅ | 코드펜스 스트리핑 + 변수명 주입 (이슈 16, 17) |
-| js/steps.js | 03-29 세션8 | ✅ | linearmodels → statsmodels (이슈 18) + treatment 템플릿화 (이슈 20) + select_dtypes (이슈 21) |
-| js/mockdata.js | 03-29 세션8 | ✅ | 패널 데이터 자동생성 추가 (이슈 19) |
+| js/steps.js | 04-01 세션9 | ✅ | 매개/조절/조절된 매개/위계적 회귀 전용 Step 추가 (Phase 6-B) |
+| js/mockdata.js | 04-01 세션9 | ✅ | Cholesky 상관 데이터 생성 + generateIndependentData 헬퍼 추출 (Phase 6-A) |
 | ResearchMethodAgent_QualityScore.xlsx | 03-28 세션6 | ✅ | 품질 평가 엑셀 (61/100점) |
 | js/pyodide-runner.js | 03-27 세션3 | ✅ | 일괄 패키지 로드 + statsmodels |
 | js/apa-renderer.js | 03-26 | ✅ | APA 스타일 렌더링 |
@@ -181,6 +182,91 @@
 ---
 
 ## 수정 이력
+
+### 세션9 (2026-03-30) — 홈 화면 개선 + 프린트 기능 추가 (Superpowers 활용)
+
+- **Superpowers 실제 활용**:
+  - `writing-plans` 스킬로 구현 계획 작성 (`docs/superpowers/plans/2026-03-30-home-and-print.md`)
+  - `subagent-driven-development` 스킬로 태스크별 서브에이전트 디스패치 + 2단계 리뷰(spec compliance + code quality) 실행
+
+- **홈 복귀 로직 통일 (Task 1)**:
+  - **문제**: main.js의 document-level click 이벤트(`location.reload()`)와 ui.js의 `setupHomeLink()`가 중복 → main.js가 먼저 캡처되어 항상 페이지 새로고침
+  - **수정 (main.js)**: 중복 홈 핸들러 블록 삭제 + `resetState` import 제거
+  - **수정 (ui.js)**: `resetState` import 추가, `setupHomeLink()`에서 `resetState()` 호출 후 UI 초기화 → 페이지 새로고침 없이 입력 화면 복귀
+
+- **프린트 기능 추가 (Task 2~4)**:
+  - **index.html**: `<button class="home-link">` → `<div class="result-actions">` 래퍼 + `<button class="btn-print" id="print-btn">🖨️ 결과 인쇄</button>` 추가
+  - **ui.js**: `setupPrintButton()` 함수 — 클릭 시 모든 `.result-panel`에 `print-visible` 클래스 추가 → `window.print()` → 클래스 제거. `renderInitialResult()`에서 호출
+  - **css/style.css**: `.result-actions` (flex, space-between) + `.btn-print` 스타일 추가
+  - **css/style.css**: `@media print` 블록 (151행) — 헤더/설정/입력/로딩/버튼 숨김, 4탭 전체 표시, 패널 높이 제한 해제, 코드 wrap, 테이블 포맷, 페이지 나눔
+
+- **수정 파일**: `index.html`, `css/style.css`, `js/main.js`, `js/ui.js`
+- **배포 대기**: 4개 파일 GitHub 업로드 필요 → 아래 Phase 6-A 수정과 함께 일괄 업로드
+
+- **Phase 6-A 실행 완료 (이슈 24 해결)** — Cholesky 기반 상관 데이터 생성:
+  - **agents.js**: Agent4+ 프롬프트에 `correlation_matrix` 필드 추가 (variables 배열 + 대칭행렬). 지시사항에 "상관분석 표가 있으면 반드시 추출" 규칙 추가
+  - **mockdata.js**: 3개 함수 신규 + 1개 함수 수정
+    - `choleskyDecompose(matrix)` — 양정치 행렬 → 하삼각행렬 L (A = L·L^T)
+    - `generateCorrelatedData(vars, corrMatrix, n)` — 독립 Z → L·Z 변환 → mean/sd 스케일링
+    - `generateIndependentData(vars, n)` — 기존 독립 생성 로직 헬퍼 추출
+    - `generateMockData(stats, n, category, correlationMatrix)` — corrInfo 분기: 상관행렬 있으면 Cholesky 경로, 없으면 기존 독립 경로 (하위 호환)
+  - **효과**: 논문의 상관행렬(예: r=.77)이 mock 데이터에 반영 → 회귀 R² 정상 범위로 개선
+  - **배포 대기**: `agents.js`, `mockdata.js` GitHub 업로드 필요
+
+- **Phase 6-B 실행 완료 (이슈 23 해결)** — 분석 설계 동적 감지:
+  - **agents.js**: Agent1 프롬프트 + responseSchema에 `analysis_design` 필드 추가
+    - `framework`: PROCESS / mediation / moderation / moderated_mediation / hierarchical_regression / path_analysis / none
+    - `model_number`, `paths`, `mediator`, `moderator`, `covariates` 서브필드
+    - METHODOLOGY_TAXONOMY regression 카테고리에 매개/조절/PROCESS 키워드 추가
+  - **steps.js**: `getDesignSpecificSteps()` + 4개 분석 설계별 Step 함수 신규
+    - `getMediationSteps()` — 경로a, 경로b+c', 간접효과 부트스트래핑, 경로 다이어그램
+    - `getModerationSteps()` — 평균중심화, 상호작용 모형, 단순기울기, 상호작용 플롯
+    - `getModeratedMediationSteps()` — 경로a, 조절된 경로b, 조건부 간접효과, 시각화
+    - `getHierarchicalRegressionSteps()` — 단계별 모형, ΔR² F검정, R² 변화 시각화
+  - **pipeline.js**: `resolveVariableNames()`에서 `analysis_design.mediator/moderator/covariates` 한→영 매핑 추가
+  - **효과**: 매개/조절/조절된 매개/위계적 회귀 논문에서 전용 분석 Step 자동 생성
+  - **배포 대기**: `agents.js`, `steps.js`, `pipeline.js` GitHub 업로드 필요
+
+- **품질 진단 — KCI 논문(조건부 자아존중감과 SNS 중독경향성) 실제 테스트**:
+  - 논문: 정하은·양수진 (2025), PROCESS Macro Model 14 (조절된 매개모형), N=400
+  - 검증 파일: `C:\Users\sudon\Downloads\KCI_FI003235104.md` (원본 마크다운)
+
+  - **이슈 23 (P0): 분석 모형 불일치** — 논문은 PROCESS Macro Model 14 (조절된 매개) 사용, 시스템은 `regression`으로 분류 → 단순 OLS만 실행. 매개효과, 상호작용항, 부트스트래핑 CI가 전부 없음
+    - 원본: R²=.53/.83, B(상향비교→중독)=.18***, 상호작용 B=.08***
+    - 시스템: R²=.000, B=.002(p=.959) — 완전히 다른 결과
+    - **근본 원인**: 12개 카테고리에 매개/조절/조절된 매개 모형 전용 분석이 없음
+
+  - **이슈 24 (P0): Mock 데이터 상관구조 미보존** — mockdata.js가 변수를 독립적으로 난수 생성 → 논문에서 r=.63인 변수들이 생성 데이터에서 r≈0 → 모든 회귀계수가 비유의
+    - 원본 상관: r(중독,부적강화)=.77, r(중독,상향비교)=.63, r(자아존중감,상향비교)=.36
+    - 시스템 상관: r=-0.250~0.550 (부호/크기 불일치)
+
+  - **이슈 25 (P1): 분석 네비게이션 부재** — 분석실습 탭에 Step 1~4가 순차 나열, 원하는 분석(기술통계/기본모형/확장모형 등)을 직접 선택하여 볼 수 없음. 코드 수정 후 재실행도 불가
+
+- **커버리지 분석 — 현재 12개 카테고리의 사각지대**:
+
+  | 빈도 | 분석 방법 | 현재 처리 | 문제 |
+  |------|----------|----------|------|
+  | 매우 높음 | 매개분석 (PROCESS Model 4) | regression → 단순 OLS | 간접효과/부트스트래핑 없음 |
+  | 매우 높음 | 조절분석 (PROCESS Model 1) | regression → 단순 OLS | 상호작용항/단순기울기 없음 |
+  | 매우 높음 | 조절된 매개 (Model 7,8,14 등) | regression → 단순 OLS | 조건부 간접효과 없음 |
+  | 높음 | 위계적 회귀분석 | regression → 기본 OLS | 모형비교(ΔR²) 없음 |
+  | 중간 | 다층모형 (HLM/MLM) | 카테고리 없음 | 미지원 |
+  | 중간 | 잠재프로파일 (LPA/LCA) | sem 하위 | Step 없음 |
+
+- **Phase 6 개선 전략 수립 (하이브리드 접근)**:
+  - **Phase 6-A**: Cholesky 분해 기반 상관구조 보존 Mock 데이터 생성 (mockdata.js)
+    - Agent4+ 프롬프트에 상관행렬 추출 필드 추가
+    - `generateCorrelatedData(means, sds, corrMatrix, n)` 구현
+    - 효과: 모든 분석의 R²/계수 품질 즉시 향상
+  - **Phase 6-B**: 분석 설계 동적 감지 (agents.js Agent1)
+    - `analysis_design` 필드 추가: framework, model_type, paths, moderator, covariates
+    - steps.js에서 분석 설계 기반 동적 Step 생성
+    - 효과: 매개/조절/조절된 매개 등 커버리지 확대
+  - **Phase 6-C**: 보고된 결과값 기반 역추정 데이터 생성
+    - 논문의 B, SE, R², 상관행렬로부터 `np.random.multivariate_normal()` + 최적화
+    - 효과: 생성 데이터로 분석 시 원본 결과와 근접한 재현
+  - **Phase 6-D**: 분석 네비게이션 + 코드 수정 재실행 UX
+    - Step 앵커 네비게이션, 코드 편집 textarea, 비교 뷰
 
 ### 세션8 (2026-03-29) — 전체 파일 검토 + 오류 분석 + Superpowers 연결 + 이슈 15~18 수정
 
@@ -367,14 +453,51 @@
 4. ✅ **이슈 18**: steps.js + agents.js — linearmodels → statsmodels 대체
 5. ⏳ **GitHub 업로드 필요**: `steps.js`, `agents.js`, `ui.js`, `simulator.js`, `pipeline.js`
 
-### Phase 4-Sprint2: 구조 변경 (P1)
+### Phase 5: 홈 화면 개선 + 프린트 기능 (P1) — ✅ 코드 수정 완료, ⏳ 배포 대기
+
+1. ✅ 홈 복귀 로직 통일 (main.js 중복 제거 + ui.js resetState 연동)
+2. ✅ 프린트 버튼 추가 (index.html + ui.js)
+3. ✅ @media print CSS 블록 추가 (style.css)
+4. ✅ result-actions 스타일링 (style.css)
+5. ⏳ **GitHub 업로드 필요**: `index.html`, `css/style.css`, `js/main.js`, `js/ui.js`
+
+### Phase 6-A: 상관구조 보존 Mock 데이터 생성 (P0) — ❌ 미시작
+
+> **최우선**: 모든 분석 결과의 기반. R²=0.000 문제 즉시 해결
+
+1. ❌ Agent4+ 프롬프트에 `correlation_matrix` 추출 필드 추가 (agents.js)
+2. ❌ mockdata.js에 `generateCorrelatedData(means, sds, corrMatrix, n)` 구현 (Cholesky 분해)
+3. ❌ 기존 `generateMockData()` → 상관행렬 존재 시 `generateCorrelatedData()` 분기
+4. ❌ KCI 논문으로 검증: 생성 데이터의 상관행렬 ≈ 원본 표2
+
+### Phase 6-B: 분석 설계 동적 감지 + 매개/조절 Step (P0) — ❌ 미시작
+
+> **커버리지 확장**: 사회과학 논문의 50%+ 차지하는 매개/조절 모형 지원
+
+1. ❌ Agent1 `analysis_design` 필드 추가 (framework, model_type, paths, moderator, covariates)
+2. ❌ METHODOLOGY_TAXONOMY에 매개/조절 분류 가이드 추가 (regression 하위 세분화)
+3. ❌ steps.js에 mediation/moderation/moderated_mediation 전용 Step 추가
+4. ❌ 부트스트래핑 간접효과 CI 코드 (Pyodide statsmodels 기반)
+
+### Phase 6-C: 역추정 데이터 생성 (P1) — ❌ 미시작
+
+1. ❌ 보고된 회귀계수(B, SE, R²) 기반 최적화 루프
+2. ❌ `np.random.multivariate_normal()` + 반복 조정
+
+### Phase 6-D: 분석 네비게이션 + 재실행 UX (P1) — ❌ 미시작
+
+1. ❌ Step 앵커 네비게이션 바
+2. ❌ 코드 편집 textarea + 재실행 버튼
+3. ❌ 결과 비교 뷰
+
+### Phase 4-Sprint2: 구조 변경 (P2) — 우선순위 하향
 
 - 4-A: pdf.js 폰트 기반 헤딩 감지 추가 [+4점]
 - 4-F: 변수 역할/유형 분류 강화 [+5점]
 - 4-G: callGemini()에 responseSchema 옵션 추가 [+2~3점]
 - maxMethods 2→3 확장
 
-### Phase 4-Sprint3: 고급 기능 (P2)
+### Phase 4-Sprint3: 고급 기능 (P2) — 우선순위 하향
 
 - 4-D: 멀티모달 2패스 수식 추출 [+3점]
 - 4-E: Agent1 Decomposition Prompting + 하위 분석 감지 [+3점]
