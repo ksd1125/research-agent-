@@ -37,12 +37,28 @@ export function abortPipeline() {
  * @param {string} apiKey
  * @param {string} prompt  — 텍스트 프롬프트
  * @param {number} [maxTokens=4000]
+ * @param {Object} [opts]
+ * @param {boolean} [opts.jsonMode=false] — responseMimeType: application/json 강제
+ * @param {Object|null} [opts.responseSchema=null] — Gemini responseSchema (JSON Schema 객체)
  * @returns {Promise<string>} — 응답 텍스트
  */
-export async function callGemini(apiKey, prompt, maxTokens = 4000) {
+export async function callGemini(apiKey, prompt, maxTokens = 4000, { jsonMode = false, responseSchema = null } = {}) {
   if (!apiKey) throw new Error(MESSAGES.errors.noApiKey);
 
   const url = `${API.baseUrl}/${API.defaultModel}:generateContent?key=${apiKey}`;
+
+  const generationConfig = {
+    temperature: API.defaultTemp,
+    maxOutputTokens: maxTokens,
+  };
+  // JSON 강제 모드: Gemini가 반드시 유효한 JSON만 출력하도록 강제
+  if (jsonMode || responseSchema) {
+    generationConfig.responseMimeType = 'application/json';
+  }
+  // responseSchema: 필드 구조를 JSON Schema로 강제 (필드 누락 방지)
+  if (responseSchema) {
+    generationConfig.responseSchema = responseSchema;
+  }
 
   let response;
   try {
@@ -51,10 +67,7 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: API.defaultTemp,
-          maxOutputTokens: maxTokens,
-        },
+        generationConfig,
       }),
       signal: _abortController?.signal,
     });
@@ -87,13 +100,27 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000) {
  * @param {string} pdfBase64 — PDF 파일의 base64 인코딩 문자열
  * @param {string} prompt    — 텍스트 프롬프트
  * @param {number} [maxTokens=8000]
+ * @param {Object} [opts]
+ * @param {boolean} [opts.jsonMode=false] — JSON 응답 강제
+ * @param {Object|null} [opts.responseSchema=null] — JSON Schema 강제
  * @returns {Promise<string>} — 응답 텍스트
  */
-export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8000) {
+export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8000, { jsonMode = false, responseSchema = null } = {}) {
   if (!apiKey) throw new Error(MESSAGES.errors.noApiKey);
   if (!pdfBase64) throw new Error('PDF 데이터가 없습니다.');
 
   const url = `${API.baseUrl}/${API.defaultModel}:generateContent?key=${apiKey}`;
+
+  const generationConfig = {
+    temperature: API.defaultTemp,
+    maxOutputTokens: maxTokens,
+  };
+  if (jsonMode || responseSchema) {
+    generationConfig.responseMimeType = 'application/json';
+  }
+  if (responseSchema) {
+    generationConfig.responseSchema = responseSchema;
+  }
 
   let response;
   try {
@@ -113,10 +140,7 @@ export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8
             { text: prompt },
           ],
         }],
-        generationConfig: {
-          temperature: API.defaultTemp,
-          maxOutputTokens: maxTokens,
-        },
+        generationConfig,
       }),
       signal: _abortController?.signal,
     });
@@ -161,11 +185,11 @@ const METHODOLOGY_TAXONOMY = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. regression (회귀분석 — 횡단면)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• 식별 키워드: OLS, linear regression, logistic regression, probit, tobit, quantile regression, robust SE, heteroskedasticity
+• 식별 키워드: OLS, linear regression, logistic regression, probit, tobit, quantile regression, robust SE, heteroskedasticity, 매개분석, 조절분석, 매개효과, 조절효과, PROCESS Macro, Hayes, 간접효과, indirect effect, 부트스트래핑, bootstrapping CI, Sobel test, 상호작용항, interaction term, 단순기울기, simple slopes, Johnson-Neyman, 조절된 매개, moderated mediation, 조건부 간접효과, conditional indirect effect, 위계적 회귀, hierarchical regression, ΔR²
 • 데이터 구조: 횡단면(cross-section), 단일 시점, N개 관측치
 • 결과 테이블 특징: 계수(β), 표준오차(SE), t-값, p-값, R², 조정 R²
-• 대표 분석: OLS, WLS, GLS, 로지스틱회귀, 프로빗, 토빗, 분위수회귀
-• 주의: 패널/시계열이 아닌 단일 시점 데이터에만 적용
+• 대표 분석: OLS, WLS, GLS, 로지스틱회귀, 프로빗, 토빗, 분위수회귀, 매개분석(PROCESS Model 4), 조절분석(PROCESS Model 1), 조절된 매개분석(PROCESS Model 7/8/14/58), 위계적 회귀분석
+• 주의: 패널/시계열이 아닌 단일 시점 데이터에만 적용. 매개/조절/위계적 회귀도 이 카테고리에 포함되며, analysis_design 필드에서 세부 프레임워크를 구분
 
 2. causal_inference (인과추론 — 패널/준실험)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -277,9 +301,20 @@ const METHODOLOGY_TAXONOMY = `
 12. 위에 해당 없으면 → regression
 `;
 
-function buildAgent1Prompt(paperText) {
-  return `${METHODOLOGY_TAXONOMY}
+/**
+ * Agent 1 프롬프트 생성
+ * @param {string} paperText — 논문 전문
+ * @param {Array} [extractedSections=[]] — pdf.js 폰트 기반 감지 헤딩 (4-A 연동)
+ */
+function buildAgent1Prompt(paperText, extractedSections = []) {
+  // 4-A: pdf.js가 감지한 헤딩 목록을 힌트로 주입
+  const sectionHint = extractedSections.length > 0
+    ? `\n[PDF 폰트 분석으로 감지된 섹션 헤딩 목록 — 이를 참조하여 section_index를 채우세요]:
+${extractedSections.map((s, i) => `  ${i + 1}. "${s.text}" (페이지 ${s.page}, 폰트크기 ${s.fontSize})`).join('\n')}\n`
+    : '';
 
+  return `${METHODOLOGY_TAXONOMY}
+${sectionHint}
 논문 텍스트:
 ${paperText}
 
@@ -292,7 +327,9 @@ ${paperText}
 3. 분류 우선순위 규칙에 따라 analysis_category를 결정
 4. 각 방법론에 대해 구체적 analysis_type을 자유 기술 (예: PSM-DID, 이원 ANOVA, SAR 등)
 
-중요: detected_methods는 가장 핵심적인 방법론 최대 ${API.maxMethods}개만 포함하세요.
+중요:
+- detected_methods는 가장 핵심적인 방법론 최대 ${API.maxMethods}개만 포함하세요.
+- section_index는 반드시 논문의 주요 섹션을 최소 3개 이상 포함하세요 (서론/문헌검토/방법론/결과/결론 등).
 
 출력 형식:
 {
@@ -325,21 +362,118 @@ ${paperText}
         "outcome": "종속변수/반응변수/결과변수 설명 (30자 이내)",
         "treatment": "처리변수/핵심독립변수/요인 설명 (30자 이내)",
         "controls": "통제변수/공변량을 반드시 구체적으로 나열. 다음을 모두 포함: (1) 고정효과(fixed effects: 개체FE, 시간FE, 산업FE, 지역FE 등), (2) 더미변수(dummy/indicator variables), (3) 공변량(covariates), (4) 논문 수식에서 μ, ν, δ, γ, λ 등 그리스 문자로 표기된 통제 항목. 논문에 통제변수가 전혀 없는 경우에만 '없음'으로 표기. '미언급'은 사용 금지 — 수식/표/본문에서 반드시 찾아서 기술하세요"
+      },
+      "analysis_design": {
+        "framework": "분석 프레임워크. 반드시 다음 중 하나 선택: PROCESS | hierarchical_regression | mediation | moderation | moderated_mediation | path_analysis | none. PROCESS Macro, 매개분석, 조절분석, 조절된 매개분석, 위계적 회귀분석 등이 명시되면 해당 값 사용. 일반 회귀/기타 → none",
+        "model_number": "PROCESS Model 번호 (해당 시, 예: 1, 4, 7, 14, 58 등). PROCESS가 아니면 null",
+        "paths": ["경로 설명 (예: 'X→M→Y', 'W moderates M→Y'). 없으면 빈 배열"],
+        "mediator": "매개변수 name_en 또는 한국어명 (없으면 null)",
+        "moderator": "조절변수 name_en 또는 한국어명 (없으면 null)",
+        "covariates": ["공변량 목록 (없으면 빈 배열)"]
       }
     }
   ]
-}`;
 }
+
+analysis_design 분류 가이드:
+- PROCESS Macro (Model 1~76), Hayes 매개/조절 분석 → framework에 해당 유형 기재, model_number 명시
+- "매개효과", "간접효과", "부트스트래핑 CI", "Sobel test" → mediation (PROCESS면 PROCESS + model_number)
+- "조절효과", "상호작용항", "단순기울기", "Johnson-Neyman" → moderation
+- "조절된 매개", "조건부 간접효과", "conditional indirect effect" → moderated_mediation
+- "위계적 회귀", "단계적 회귀", "ΔR²", "모형 비교" → hierarchical_regression
+- 경로분석(SEM 아닌 관측변수 경로모형) → path_analysis
+- 위 해당 없으면 → none`;
+}
+
+/**
+ * Agent 1 responseSchema — section_index, controls 필드 누락 방지
+ * Gemini가 이 스키마를 따르도록 강제하여 필수 필드 보장
+ */
+const AGENT1_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    metadata: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '논문 제목' },
+        summary: { type: 'string', description: '1문장 요약' },
+      },
+      required: ['title', 'summary'],
+    },
+    paper_context: {
+      type: 'object',
+      properties: {
+        domain: { type: 'string' },
+        research_type: { type: 'string' },
+        data_characteristics: { type: 'string' },
+        analysis_category: { type: 'string', enum: ['regression','causal_inference','experimental','spatial','time_series','machine_learning','causal_ml','unstructured_data','bayesian','sem','survival','meta_analysis'] },
+        category_evidence: { type: 'string' },
+      },
+      required: ['domain', 'analysis_category', 'category_evidence'],
+    },
+    section_index: {
+      type: 'array',
+      description: '논문의 주요 섹션 목록. 반드시 1개 이상 포함.',
+      items: {
+        type: 'object',
+        properties: {
+          section: { type: 'string' },
+          summary: { type: 'string' },
+          key_tables: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['section', 'summary'],
+      },
+    },
+    detected_methods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          raw_name: { type: 'string' },
+          evidence_text: { type: 'string' },
+          target_result_location: { type: 'string' },
+          source_section: { type: 'string' },
+          analysis_type: { type: 'string' },
+          key_variables: {
+            type: 'object',
+            properties: {
+              outcome: { type: 'string' },
+              treatment: { type: 'string' },
+              controls: { type: 'string', description: '통제변수, 고정효과, 더미 등을 모두 나열' },
+            },
+            required: ['outcome', 'controls'],
+          },
+          analysis_design: {
+            type: 'object',
+            description: '매개/조절/위계적 회귀 등 분석 프레임워크 정보',
+            properties: {
+              framework: { type: 'string', enum: ['PROCESS', 'hierarchical_regression', 'mediation', 'moderation', 'moderated_mediation', 'path_analysis', 'none'] },
+              model_number: { type: 'string', nullable: true },
+              paths: { type: 'array', items: { type: 'string' } },
+              mediator: { type: 'string', nullable: true },
+              moderator: { type: 'string', nullable: true },
+              covariates: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['framework'],
+          },
+        },
+        required: ['raw_name', 'analysis_type', 'key_variables', 'analysis_design'],
+      },
+    },
+  },
+  required: ['metadata', 'paper_context', 'section_index', 'detected_methods'],
+};
 
 /**
  * Agent 1 실행 — 문서 분석
  * @param {string} apiKey
  * @param {string} paperText
+ * @param {Array} [extractedSections] — pdf.js 헤딩 감지 결과 (4-A 연동)
  * @returns {Promise<Object>}
  */
-export async function runAgent1(apiKey, paperText) {
-  const prompt = buildAgent1Prompt(paperText);
-  const raw = await callGemini(apiKey, prompt, API.tokens.agent1);
+export async function runAgent1(apiKey, paperText, extractedSections = []) {
+  const prompt = buildAgent1Prompt(paperText, extractedSections);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent1, { responseSchema: AGENT1_RESPONSE_SCHEMA });
 
   try {
     return safeParseJSON(raw);
@@ -373,12 +507,14 @@ function buildAgent2Prompt(rawName, evidenceText, paperContext) {
 [발췌 문장]: "${evidenceText}"
 [방법론 명칭]: "${rawName}"
 
-위 맥락을 바탕으로 이 방법론을 분석하세요:
+위 맥락을 바탕으로 이 방법론을 분석하세요.
+
+**문체 원칙**: 논문 저자가 사용한 용어·워딩·표현 방식을 최대한 그대로 유지하세요. 저자가 "순고용창출"이라고 썼으면 "순고용창출"로, "업력"이라고 썼으면 "업력"으로 기술하세요. 저자의 논문 본문에 없는 일반적 교과서 표현 대신 논문 원문의 워딩에 충실하세요.
 
 {
   "standard_name": "표준화된 학술적 명칭 (예: Ordinary Least Squares Regression)",
-  "concept": "이 방법론의 통계적 개념을 위 [논문 분야]의 관점에서 설명 (2~3문장)",
-  "why_used": "위 [데이터 특성]과 [연구 유형]을 고려했을 때, 이 논문에서 이 방법을 채택한 학술적 이유 (2~3문장)",
+  "concept": "이 방법론의 통계적 개념을 위 [논문 분야]의 관점에서, 저자가 사용한 용어를 살려 설명 (2~3문장)",
+  "why_used": "위 [데이터 특성]과 [연구 유형]을 고려했을 때, 이 논문에서 이 방법을 채택한 학술적 이유. 저자가 본문에서 밝힌 근거를 반영 (2~3문장)",
   "steps": [
     {"step": 1, "name": "단계명", "desc": "구체적 분석/전처리 절차 설명"}
   ]
@@ -394,7 +530,7 @@ function buildAgent2Prompt(rawName, evidenceText, paperContext) {
  */
 export async function runAgent2(apiKey, method, paperContext) {
   const prompt = buildAgent2Prompt(method.raw_name, method.evidence_text, paperContext);
-  const raw = await callGemini(apiKey, prompt, API.tokens.agent2);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent2, { jsonMode: true });
 
   try {
     return safeParseJSON(raw);
@@ -434,13 +570,13 @@ export function getAnalysisProfile(category, analysisType, lang) {
       dataHint: '횡단면 데이터를 생성하세요. 종속변수, 독립변수, 통제변수를 포함.',
     },
     causal_inference: {
-      python: 'pandas, numpy, statsmodels, linearmodels, scipy, matplotlib',
+      python: 'pandas, numpy, statsmodels, scipy, matplotlib',
       r: 'fixest, plm, did, dplyr, lmtest, ggplot2',
       dataHint: '패널 데이터(entity-time 구조)를 생성하세요. entity ID, 시간 변수, 처리 여부(treatment indicator)를 포함. 처리 시점이 다른 다기간 설계도 고려.',
     },
     // 하위 호환성: 기존 panel 카테고리를 causal_inference로 매핑
     panel: {
-      python: 'pandas, numpy, statsmodels, linearmodels, scipy, matplotlib',
+      python: 'pandas, numpy, statsmodels, scipy, matplotlib',
       r: 'fixest, plm, did, dplyr, lmtest, ggplot2',
       dataHint: '패널 데이터(entity-time 구조)를 생성하세요. entity ID, 시간 변수, 처리 여부(treatment indicator)를 포함.',
     },
@@ -653,7 +789,8 @@ export async function runAgent3(apiKey, statResult, paperContext, targetLocation
     const metaRaw = await callGemini(
       apiKey,
       buildAgent3MetaPrompt(statResult.standard_name, paperContext),
-      API.tokens.agent3Meta
+      API.tokens.agent3Meta,
+      { jsonMode: true }
     );
     const metaResult = safeParseJSON(metaRaw);
     packages = metaResult.packages || packages;
@@ -848,8 +985,14 @@ export async function runInterpretationGuide(apiKey, methodResult, paperContext,
 # Part I: 저자 관점의 결과 해석 (Author's Interpretation — 70%)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-논문 저자의 시각에서 결과를 해석하세요. 논문 본문에 기술된 해석을 최대한 충실하게 반영하되,
-통계적 결과를 읽는 방법을 구체적으로 안내하세요.
+논문 저자의 시각에서 결과를 해석하세요.
+
+**문체 원칙 (Part I 전체 적용)**:
+- 저자가 논문 본문에서 사용한 **용어, 워딩, 표현 방식**을 그대로 유지하세요.
+- 저자가 "순고용창출률"이라고 썼으면 "순고용창출률"로, "업력"이라고 썼으면 "업력"으로 기술하세요.
+- 저자가 결과를 해석한 논조(예: "~에 유의한 영향을 미치는 것으로 나타났다")를 모방하세요.
+- 교과서적 일반론이 아니라, **이 논문의 구체적 변수명·데이터명·결과값**을 인용하여 기술하세요.
+- 즉, 저자가 직접 쓴 것처럼 읽히는 해석을 작성하세요.
 
 ## Step 1: 결과 테이블/그림 구조 파악
 - ${targetLocation}의 구조(행/열, 패널, 범례 등) 설명
@@ -874,6 +1017,8 @@ ${step5Tasks}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 당신은 이제 **독립적 평가자(evaluator)**입니다. 저자의 해석에 동의하는 부분과 의문을 제기하는 부분을 구분하여 작성하세요.
+
+**문체 원칙 (Part II)**: Part I과 달리, 여기서는 비판적 학술 심사 톤을 사용하세요. "이 논문의 접근과 달리...", "저자는 ~라고 주장하나, ~의 가능성을 간과하고 있다" 등 심사위원 관점의 객관적·비판적 어조로 기술하세요. 단, 이 논문의 **구체적 변수명·데이터·결과**를 인용하여 비판하세요.
 
 ## 평가 1: 방법론 적절성 평가
 - 이 연구 목적에 "${methodResult.standard_name}" 방법론이 **최적의 선택이었는지** 평가
@@ -1052,6 +1197,14 @@ ${paperText.substring(0, 15000)}
     }
   ],
   "structure_diagram": "데이터 구조를 텍스트로 도식화. 패널이면 'entity_id × year → treatment, outcome, controls', 실험이면 '집단(처리/통제) × 시점(사전/사후)' 등. 1~2줄.",
+  "correlation_matrix": {
+    "variables": ["conditional_self_esteem", "sns_addiction_tendency", "sns_upward_comparison"],
+    "matrix": [
+      [1.00, 0.24, 0.36],
+      [0.24, 1.00, 0.63],
+      [0.36, 0.63, 1.00]
+    ]
+  },
   "limitations": "이 데이터의 알려진 한계점 (1~2문장). 예: '가상 데이터는 원본의 기술통계를 기반으로 역산한 것이므로 변수 간 복잡한 상관구조가 완벽히 재현되지 않을 수 있습니다.'"
 }
 
@@ -1070,7 +1223,13 @@ role 분류 가이드 (반드시 아래 기준으로 분류):
 - "분해": 종속변수를 구성하는 하위 요소 (예: 순고용창출 = 진입 + 확장 - 퇴출 - 축소). 종속변수의 분해 결과이므로 role은 "종속"이 아님
 - "층화": 분석을 하위 그룹별로 나누는 기준 변수 (예: 성별, 연령 그룹별 분석의 그룹 변수)
 - "도구": IV/2SLS에서 도구변수(instrument)
-- "매개"/"조절": 매개효과(mediation)/조절효과(moderation) 분석의 변수`;
+- "매개"/"조절": 매개효과(mediation)/조절효과(moderation) 분석의 변수
+- **correlation_matrix (매우 중요)**: 논문에 상관분석 표(Correlation Table, 표 2, Table 2 등)가 있으면 **반드시** 추출해야 합니다.
+  - variables: 위 variables 배열의 name_en 값들 (연속형만, 범주형 제외)
+  - matrix: variables 순서에 맞는 대칭 상관행렬 (대각선=1.0, 소수점 2자리)
+  - 논문 상관표의 수치를 **그대로** 옮기세요 (예: r=.24 → 0.24)
+  - 상관표가 없는 논문이면 correlation_matrix를 null로 설정
+  - **절대로 null로 기본값을 넣지 마세요** — 상관표가 있으면 반드시 추출하세요`;
 }
 
 /**
@@ -1084,7 +1243,7 @@ role 분류 가이드 (반드시 아래 기준으로 분류):
  */
 export async function runAgent4Plus(apiKey, paperText, paperContext, detectedMethods) {
   const prompt = buildAgent4PlusPrompt(paperText, paperContext, detectedMethods);
-  const raw = await callGemini(apiKey, prompt, API.tokens.agent4Plus || 4000);
+  const raw = await callGemini(apiKey, prompt, API.tokens.agent4Plus || 8000, { jsonMode: true });
 
   try {
     const result = safeParseJSON(raw);
@@ -1114,6 +1273,81 @@ export async function runAgent4Plus(apiKey, paperText, paperContext, detectedMet
       structure_diagram: '',
       limitations: '데이터 구조 추출에 실패했습니다. 논문의 기술통계 표를 직접 참조해주세요.',
     };
+  }
+}
+
+/* ============================================================
+   상관행렬 전용 추출 (Agent4+ 보완)
+   ============================================================ */
+
+/**
+ * 논문에서 상관행렬만 집중 추출하는 전용 API 호출
+ * Agent4+가 correlation_matrix를 null로 반환했을 때 2차 시도
+ * @param {string} apiKey
+ * @param {string} paperText — 논문 전문
+ * @param {Array} variables — Agent4+가 추출한 변수 목록
+ * @returns {Promise<Object|null>} — { variables: string[], matrix: number[][] } 또는 null
+ */
+export async function extractCorrelationMatrix(apiKey, paperText, variables) {
+  const varNames = variables
+    .filter(v => v.type === '연속' || v.type === '순서')
+    .map(v => `${v.name_en} (${v.name_kr})`)
+    .join(', ');
+
+  const prompt = `당신은 학술 논문에서 상관분석 표(Correlation Table)를 추출하는 전문가입니다.
+
+아래 논문 텍스트에서 상관분석 표(Correlation Matrix, 상관관계 표, Table 2, 표 2 등)를 찾아 JSON으로 반환하세요.
+
+## 추출 대상 변수
+${varNames}
+
+## 논문 텍스트
+${paperText.slice(0, 25000)}
+
+## 반환 형식
+반드시 아래 JSON 형식으로 반환하세요:
+{
+  "found": true,
+  "variables": ["var1_english", "var2_english", "var3_english"],
+  "matrix": [
+    [1.00, 0.35, 0.42],
+    [0.35, 1.00, 0.58],
+    [0.42, 0.58, 1.00]
+  ]
+}
+
+## 추출 규칙
+1. 논문의 상관분석 표에서 **Pearson r 값**을 찾으세요
+2. 표에서 1, 2, 3... 번호가 매겨진 변수들의 상관계수를 읽으세요
+3. variables 배열은 위 "추출 대상 변수"의 name_en(영문)만 사용하세요
+4. matrix는 대칭행렬이어야 합니다 (matrix[i][j] === matrix[j][i])
+5. 대각선은 반드시 1.00
+6. 논문에 r=.24 로 표기되어 있으면 0.24로 변환
+7. 논문에 **가 붙어있으면 (예: .24**) 숫자만 추출 (0.24)
+8. 하삼각행렬만 있으면 상삼각도 대칭으로 채우세요
+
+상관분석 표가 논문에 **없으면** 다음을 반환하세요:
+{ "found": false, "variables": [], "matrix": [] }
+
+절대로 상관계수를 추측하거나 만들어내지 마세요. 논문에 있는 수치만 사용하세요.`;
+
+  try {
+    const raw = await callGemini(apiKey, prompt, 4000, { jsonMode: true });
+    const result = safeParseJSON(raw);
+
+    if (result.found && Array.isArray(result.variables) && Array.isArray(result.matrix) && result.matrix.length >= 2) {
+      console.log('[CorrelationExtractor] ✅ 상관행렬 추출 성공:', result.variables.length, '변수');
+      return {
+        variables: result.variables,
+        matrix: result.matrix,
+      };
+    }
+
+    console.log('[CorrelationExtractor] 상관표 없음 또는 추출 실패');
+    return null;
+  } catch (err) {
+    console.warn('[CorrelationExtractor] API 호출 실패:', err.message);
+    return null;
   }
 }
 
@@ -1156,6 +1390,11 @@ ${keyVars.controls ? `[통제변수]: ${keyVars.controls}` : ''}
 - 이 논문이 사용하는 구체적 데이터셋명과 그 데이터의 특수한 한계를 언급하세요.
 - 이 논문의 구체적 변수명/측정 방식에서 발생하는 측정 문제를 다루세요.
 - "패널 회귀의 일반적 가정" 같은 교과서적 서술 대신 "이 논문의 [구체적 종속변수]가 [구체적 데이터]에서 측정되는 방식의 한계"처럼 논문에 밀착된 비판을 하세요.
+
+**문체 원칙**:
+- 논문의 기존 내용을 기술할 때는 저자가 사용한 **용어와 워딩**을 그대로 유지하세요 (예: 저자가 "순고용창출"이라 쓰면 그대로 사용).
+- 비판·제안을 할 때는 학술 심사위원 톤을 사용하세요: "저자는 ~라고 주장하나, ~의 가능성을 간과하고 있다", "이 접근의 한계는..." 등
+- 두 톤을 혼합하여 논문에 밀착된 심층 리뷰를 작성하세요.
 
 ===PEER_REVIEW===
 ## 동료 리뷰 (Peer Review)

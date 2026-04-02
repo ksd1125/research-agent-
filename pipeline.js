@@ -12,18 +12,19 @@
  * [온디맨드] 탭 4 Q&A → Agent 5 (Q&A)
  */
 
-import { MESSAGES } from './config.js';
+import { MESSAGES, API } from './config.js';
 import { escapeHtml } from './utils.js';
 import {
   runAgent1,
   runAgent2,
   runAgent4Plus,
+  extractCorrelationMatrix,
   runReviewGuide,
   runQnA,
   createAbortController,
   abortPipeline,
 } from './agents.js';
-import { getExtractedText, getPdfBase64 } from './pdf.js';
+import { getExtractedText, getPdfBase64, getPdfFile, extractHeadingsFromPDF } from './pdf.js';
 import { convertPdfToMarkdown } from './mockdata.js';
 import { getStepsForCategory } from './steps.js';
 import { simulateExecution, simulateAlternativeMethod } from './simulator.js';
@@ -62,6 +63,102 @@ export function getMethods() { return state.methods; }
 export function getDocResult() { return state.docResult; }
 
 /* ============================================================
+   변수명 해소: Agent1 한국어명 → Agent4+ 영문 컬럼명 매핑
+   ============================================================ */
+
+/**
+ * Agent1의 한국어 key_variables를 Agent4+의 영문 name_en으로 치환
+ * mock 데이터 CSV는 name_en을 컬럼명으로 사용하므로, steps.js 코드 템플릿에
+ * 영문명이 들어가야 KeyError가 발생하지 않음
+ *
+ * @param {Object} method — Agent1의 detected_method (원본은 변경하지 않음)
+ * @param {Object|null} dataStructure — Agent4+의 결과 ({ variables: [...] })
+ * @returns {Object} — key_variables가 영문명으로 치환된 method 복사본
+ */
+function resolveVariableNames(method, dataStructure) {
+  if (!method?.key_variables || !dataStructure?.variables?.length) {
+    return method;
+  }
+
+  const vars = dataStructure.variables;
+
+  /**
+   * 한국어 변수명에 가장 가까운 Agent4+ 변수의 name_en을 반환
+   * 1차: name_kr 정확 일치
+   * 2차: name_kr가 한국어명을 포함하거나, 한국어명이 name_kr를 포함
+   * 3차: role 기반 폴백 (outcome → role이 '종속' 포함, treatment → role이 '독립'/'처리' 포함)
+   */
+  function findEnglishName(koreanName, role) {
+    if (!koreanName) return koreanName;
+
+    // 1차: 정확 일치
+    const exact = vars.find(v => v.name_kr === koreanName);
+    if (exact?.name_en) return exact.name_en;
+
+    // 2차: 부분 일치 (양방향)
+    const partial = vars.find(v =>
+      v.name_kr && (v.name_kr.includes(koreanName) || koreanName.includes(v.name_kr))
+    );
+    if (partial?.name_en) return partial.name_en;
+
+    // 3차: role 기반 폴백
+    if (role === 'outcome') {
+      const byRole = vars.find(v =>
+        v.role && (v.role.includes('종속') || v.role.includes('결과') || v.role === 'dependent')
+      );
+      if (byRole?.name_en) return byRole.name_en;
+    } else if (role === 'treatment') {
+      const byRole = vars.find(v =>
+        v.role && (v.role.includes('독립') || v.role.includes('처리') || v.role.includes('핵심') || v.role === 'independent')
+      );
+      if (byRole?.name_en) return byRole.name_en;
+    }
+
+    // 매핑 실패: 원본 반환
+    return koreanName;
+  }
+
+  // 원본 method 불변 유지 — 얕은 복사 후 key_variables만 교체
+  const resolved = { ...method };
+  const kv = { ...method.key_variables };
+
+  kv.outcome = findEnglishName(kv.outcome, 'outcome');
+  kv.treatment = findEnglishName(kv.treatment, 'treatment');
+
+  // controls가 문자열(쉼표 구분) 또는 배열일 수 있음
+  if (kv.controls) {
+    if (typeof kv.controls === 'string') {
+      kv.controls = kv.controls.split(/[,，]\s*/)
+        .map(c => findEnglishName(c.trim(), 'control'))
+        .join(', ');
+    } else if (Array.isArray(kv.controls)) {
+      kv.controls = kv.controls.map(c => findEnglishName(c, 'control'));
+    }
+  }
+
+  resolved.key_variables = kv;
+
+  // analysis_design의 mediator/moderator도 영문명 매핑
+  if (resolved.analysis_design) {
+    const ad = { ...resolved.analysis_design };
+    if (ad.mediator) ad.mediator = findEnglishName(ad.mediator, 'mediator');
+    if (ad.moderator) ad.moderator = findEnglishName(ad.moderator, 'moderator');
+    if (Array.isArray(ad.covariates)) {
+      ad.covariates = ad.covariates.map(c => findEnglishName(c, 'control'));
+    }
+    resolved.analysis_design = ad;
+  }
+
+  console.log('[변수명 매핑]', {
+    original: method.key_variables,
+    resolved: kv,
+    analysis_design: resolved.analysis_design || null,
+  });
+
+  return resolved;
+}
+
+/* ============================================================
    Phase 1: 초기 파이프라인 (PDF 업로드 → Agent 1 → Agent 4+)
    ============================================================ */
 
@@ -94,14 +191,24 @@ export async function runInitialPipeline(apiKey, selectedSections) {
       ui.setLoadingMessage('PDF 텍스트를 구조화된 마크다운으로 변환 중...');
     }
 
-    let inputText = rawInput || '';
+    // 백그라운드 텍스트 추출이 진행 중일 수 있으므로 대기 (최대 8초)
+    let fallbackText = rawInput;
+    if (!fallbackText && pdfBase64) {
+      for (let i = 0; i < 16; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        fallbackText = getExtractedText();
+        if (fallbackText) break;
+      }
+    }
+
+    let inputText = fallbackText || '';
     try {
-      inputText = await convertPdfToMarkdown(apiKey, pdfBase64, rawInput);
+      inputText = await convertPdfToMarkdown(apiKey, pdfBase64, fallbackText);
     } catch (err) {
       console.warn('PDF→MD 변환 실패, 원본 텍스트 사용:', err.message);
-      // 폴백: rawInput이 있으면 그대로 사용
-      if (!rawInput) throw err;
-      inputText = rawInput;
+      // 폴백: fallbackText가 있으면 그대로 사용
+      if (!fallbackText) throw err;
+      inputText = fallbackText;
     }
     state.paperText = inputText;
     ui.updateLoadingStep(0, 'done');
@@ -110,10 +217,29 @@ export async function runInitialPipeline(apiKey, selectedSections) {
     ui.updateLoadingStep(1, 'running');
     ui.setLoadingMessage('논문의 학문 분야와 연구 방법론을 분석 중...');
 
-    const docResult = await runAgent1(apiKey, inputText);
+    // pdf.js 폰트 기반 헤딩 감지 (Sprint 2-A): Agent1 섹션 힌트 주입용
+    let extractedSections = [];
+    const currentPdfFile = getPdfFile();
+    if (currentPdfFile) {
+      try {
+        extractedSections = await extractHeadingsFromPDF(currentPdfFile);
+        console.log(`[pdf.js 헤딩 감지] ${extractedSections.length}개 섹션 감지:`, extractedSections.map(s => s.text));
+      } catch (headingErr) {
+        console.warn('[pdf.js 헤딩 감지] 실패, 건너뜀:', headingErr.message);
+      }
+    }
+
+    const docResult = await runAgent1(apiKey, inputText, extractedSections);
     state.docResult = docResult;
     state.paperContext = docResult.paper_context || {};
-    state.methods = (docResult.detected_methods || []).slice(0, 2);
+    state.methods = (docResult.detected_methods || []).slice(0, API.maxMethods);
+    // analysis_design 로그
+    state.methods.forEach((m, i) => {
+      const ad = m.analysis_design;
+      if (ad && ad.framework !== 'none') {
+        console.log(`[Agent1] 방법론${i}: analysis_design =`, ad.framework, ad.model_number || '', 'mediator:', ad.mediator, 'moderator:', ad.moderator);
+      }
+    });
 
     ui.updateLoadingStep(1, 'done');
 
@@ -133,6 +259,26 @@ export async function runInitialPipeline(apiKey, selectedSections) {
         apiKey, inputText, state.paperContext, state.methods
       );
       state.dataStructure = dataStructure;
+      // 상관행렬 추출 결과 로그
+      const cm = dataStructure?.correlation_matrix;
+      if (cm && cm.matrix && cm.variables) {
+        console.log(`[Agent4+] ✅ correlation_matrix 추출 성공: ${cm.variables.length}변수`, cm.variables);
+      } else {
+        console.warn('[Agent4+] ⚠️ correlation_matrix 미추출 — 전용 추출 시도');
+        // 2차 시도: 상관행렬 전용 추출
+        try {
+          const corrResult = await extractCorrelationMatrix(apiKey, inputText, dataStructure.variables || []);
+          if (corrResult) {
+            dataStructure.correlation_matrix = corrResult;
+            state.dataStructure = dataStructure;
+            console.log('[CorrelationExtractor] ✅ 2차 추출 성공, dataStructure에 반영됨');
+          } else {
+            console.warn('[CorrelationExtractor] 2차 추출도 실패 — 독립 데이터 생성으로 진행');
+          }
+        } catch (corrErr) {
+          console.warn('[CorrelationExtractor] 2차 추출 오류:', corrErr.message);
+        }
+      }
     } catch (err) {
       console.warn('Agent 4+ (데이터 구조) 실패:', err.message);
       state.dataStructure = null;
@@ -176,8 +322,10 @@ export async function loadAnalysisSteps(methodIndex = 0) {
   state.statResults[methodIndex] = statResult;
 
   // Step 목록 생성 (steps.js)
+  // 이슈 23: Agent1 한국어 변수명 → Agent4+ 영문 컬럼명 매핑
+  const resolvedMethod = resolveVariableNames(method, state.dataStructure);
   const category = state.paperContext.analysis_category || 'regression';
-  const steps = getStepsForCategory(category, method, state.paperContext);
+  const steps = getStepsForCategory(category, resolvedMethod, state.paperContext);
   state.steps[methodIndex] = steps;
 
   return { statResult, steps };
@@ -217,6 +365,9 @@ export async function executeStep(methodIndex, stepId, code, lang) {
     }
   });
 
+  // 이슈 17: Agent4+ 변수 목록을 context에 주입하여 변수명 일관성 확보
+  const variableNames = dataStats.map(v => v.name_en).filter(Boolean);
+
   const context = {
     domain: state.paperContext.domain,
     analysisType: method?.analysis_type,
@@ -224,6 +375,7 @@ export async function executeStep(methodIndex, stepId, code, lang) {
     treatment: keyVars.treatment,
     dataCharacteristics: state.paperContext.data_characteristics,
     descriptiveStats,
+    variableNames,
   };
 
   const result = await simulateExecution(state.apiKey, code, lang, context);
