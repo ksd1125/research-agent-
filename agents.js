@@ -457,7 +457,7 @@ const AGENT1_RESPONSE_SCHEMA = {
             required: ['framework'],
           },
         },
-        required: ['raw_name', 'analysis_type', 'key_variables', 'analysis_design'],
+        required: ['raw_name', 'analysis_type', 'key_variables'],
       },
     },
   },
