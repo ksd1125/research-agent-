@@ -1198,9 +1198,12 @@ ${paperText.substring(0, 15000)}
   ],
   "structure_diagram": "데이터 구조를 텍스트로 도식화. 패널이면 'entity_id × year → treatment, outcome, controls', 실험이면 '집단(처리/통제) × 시점(사전/사후)' 등. 1~2줄.",
   "correlation_matrix": {
-    "description": "논문의 상관분석 테이블(표)에서 추출한 변수 간 상관계수. 없으면 null",
-    "variables": ["var1_name_en", "var2_name_en", "..."],
-    "matrix": [[1.0, 0.36], [0.36, 1.0]]
+    "variables": ["conditional_self_esteem", "sns_addiction_tendency", "sns_upward_comparison"],
+    "matrix": [
+      [1.00, 0.24, 0.36],
+      [0.24, 1.00, 0.63],
+      [0.36, 0.63, 1.00]
+    ]
   },
   "limitations": "이 데이터의 알려진 한계점 (1~2문장). 예: '가상 데이터는 원본의 기술통계를 기반으로 역산한 것이므로 변수 간 복잡한 상관구조가 완벽히 재현되지 않을 수 있습니다.'"
 }
@@ -1221,7 +1224,12 @@ role 분류 가이드 (반드시 아래 기준으로 분류):
 - "층화": 분석을 하위 그룹별로 나누는 기준 변수 (예: 성별, 연령 그룹별 분석의 그룹 변수)
 - "도구": IV/2SLS에서 도구변수(instrument)
 - "매개"/"조절": 매개효과(mediation)/조절효과(moderation) 분석의 변수
-- **correlation_matrix**: 논문에 상관분석 표(Correlation Table)가 있으면 반드시 추출. variables는 name_en과 동일한 순서로, matrix는 대칭행렬 (대각선=1.0). 상관표가 없으면 correlation_matrix: null`;
+- **correlation_matrix (매우 중요)**: 논문에 상관분석 표(Correlation Table, 표 2, Table 2 등)가 있으면 **반드시** 추출해야 합니다.
+  - variables: 위 variables 배열의 name_en 값들 (연속형만, 범주형 제외)
+  - matrix: variables 순서에 맞는 대칭 상관행렬 (대각선=1.0, 소수점 2자리)
+  - 논문 상관표의 수치를 **그대로** 옮기세요 (예: r=.24 → 0.24)
+  - 상관표가 없는 논문이면 correlation_matrix를 null로 설정
+  - **절대로 null로 기본값을 넣지 마세요** — 상관표가 있으면 반드시 추출하세요`;
 }
 
 /**

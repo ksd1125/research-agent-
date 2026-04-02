@@ -52,10 +52,27 @@ if cat_cols:
 print("\\n=== 결측치 ===")
 print(df.isnull().sum())
 
-# 상관행렬 (수치형, 식별자 제외)
+# 상관행렬 + 유의성 (수치형, 식별자 제외)
 if len(numeric_df.columns) > 1:
-    print("\\n=== 상관행렬 ===")
-    print(numeric_df.corr().round(3))`,
+    from scipy import stats as sp_stats
+    corr = numeric_df.corr()
+    n = len(numeric_df)
+    cols = numeric_df.columns
+    print("\\n=== 상관행렬 (유의성: * p<.05, ** p<.01, *** p<.001) ===")
+    # 유의성 표기 포함 상관행렬
+    result_lines = [' ' * 25 + '  '.join(f'{c:>12}' for c in cols)]
+    for i, r in enumerate(cols):
+        row_vals = []
+        for j, c in enumerate(cols):
+            r_val = corr.iloc[i, j]
+            if i == j:
+                row_vals.append(f'{"—":>12}')
+            else:
+                t_stat = r_val * np.sqrt((n-2) / (1-r_val**2)) if abs(r_val) < 1 else 0
+                p_val = 2 * (1 - sp_stats.t.cdf(abs(t_stat), n-2)) if abs(r_val) < 1 else 0
+                sig = '***' if p_val < .001 else '**' if p_val < .01 else '*' if p_val < .05 else ''
+                row_vals.append(f'{r_val:>9.3f}{sig:<3}')
+        print(f'{r:<25}' + '  '.join(row_vals))`,
         r: `library(dplyr)
 
 # 데이터 로드

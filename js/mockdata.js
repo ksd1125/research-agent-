@@ -499,13 +499,23 @@ export function generateMockData(stats, n = 500, category = null, correlationMat
 
   // 상관행렬이 있으면 Cholesky 기반 상관 데이터 생성
   const corrInfo = correlationMatrix || stats.correlation_matrix;
+  console.log('[MockData] correlation_matrix 수신:', corrInfo ? `${corrInfo.variables?.length || 0}변수, ${corrInfo.matrix?.length || 0}×${corrInfo.matrix?.[0]?.length || 0} 행렬` : 'null/없음');
+
   if (corrInfo && corrInfo.matrix && corrInfo.variables) {
     const corrVarNames = corrInfo.variables;
+    const enrichedNames = enrichedVars.map(v => v.name_en);
     const corrVarsOrdered = corrVarNames
       .map(name => enrichedVars.find(v => v.name_en === name))
       .filter(Boolean);
 
+    console.log('[MockData] 상관행렬 변수 매칭:', {
+      corrVarNames,
+      enrichedNames,
+      matchedCount: corrVarsOrdered.length,
+    });
+
     if (corrVarsOrdered.length >= 2 && corrInfo.matrix.length === corrVarsOrdered.length) {
+      console.log('[MockData] ✅ Cholesky 경로 사용');
       const correlatedData = generateCorrelatedData(corrVarsOrdered, corrInfo.matrix, sampleSize);
       const corrVarNameSet = new Set(corrVarsOrdered.map(v => v.name_en));
 
@@ -533,9 +543,11 @@ export function generateMockData(stats, n = 500, category = null, correlationMat
         data.push(row);
       }
     } else {
+      console.warn('[MockData] ⚠️ 상관행렬 변수 매칭 실패 → 독립 생성 폴백');
       data = generateIndependentData(enrichedVars, sampleSize);
     }
   } else {
+    console.log('[MockData] ℹ️ 상관행렬 없음 → 독립 데이터 생성');
     data = generateIndependentData(enrichedVars, sampleSize);
   }
 

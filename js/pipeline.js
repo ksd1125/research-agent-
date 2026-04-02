@@ -232,6 +232,13 @@ export async function runInitialPipeline(apiKey, selectedSections) {
     state.docResult = docResult;
     state.paperContext = docResult.paper_context || {};
     state.methods = (docResult.detected_methods || []).slice(0, API.maxMethods);
+    // analysis_design 로그
+    state.methods.forEach((m, i) => {
+      const ad = m.analysis_design;
+      if (ad && ad.framework !== 'none') {
+        console.log(`[Agent1] 방법론${i}: analysis_design =`, ad.framework, ad.model_number || '', 'mediator:', ad.mediator, 'moderator:', ad.moderator);
+      }
+    });
 
     ui.updateLoadingStep(1, 'done');
 
@@ -251,6 +258,13 @@ export async function runInitialPipeline(apiKey, selectedSections) {
         apiKey, inputText, state.paperContext, state.methods
       );
       state.dataStructure = dataStructure;
+      // 상관행렬 추출 결과 로그
+      const cm = dataStructure?.correlation_matrix;
+      if (cm && cm.matrix && cm.variables) {
+        console.log(`[Agent4+] ✅ correlation_matrix 추출 성공: ${cm.variables.length}변수`, cm.variables);
+      } else {
+        console.warn('[Agent4+] ⚠️ correlation_matrix 미추출 (null 또는 형식 불일치). dataStructure.correlation_matrix:', cm);
+      }
     } catch (err) {
       console.warn('Agent 4+ (데이터 구조) 실패:', err.message);
       state.dataStructure = null;
