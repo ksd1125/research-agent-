@@ -190,14 +190,24 @@ export async function runInitialPipeline(apiKey, selectedSections) {
       ui.setLoadingMessage('PDF 텍스트를 구조화된 마크다운으로 변환 중...');
     }
 
-    let inputText = rawInput || '';
+    // 백그라운드 텍스트 추출이 진행 중일 수 있으므로 대기 (최대 8초)
+    let fallbackText = rawInput;
+    if (!fallbackText && pdfBase64) {
+      for (let i = 0; i < 16; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        fallbackText = getExtractedText();
+        if (fallbackText) break;
+      }
+    }
+
+    let inputText = fallbackText || '';
     try {
-      inputText = await convertPdfToMarkdown(apiKey, pdfBase64, rawInput);
+      inputText = await convertPdfToMarkdown(apiKey, pdfBase64, fallbackText);
     } catch (err) {
       console.warn('PDF→MD 변환 실패, 원본 텍스트 사용:', err.message);
-      // 폴백: rawInput이 있으면 그대로 사용
-      if (!rawInput) throw err;
-      inputText = rawInput;
+      // 폴백: fallbackText가 있으면 그대로 사용
+      if (!fallbackText) throw err;
+      inputText = fallbackText;
     }
     state.paperText = inputText;
     ui.updateLoadingStep(0, 'done');

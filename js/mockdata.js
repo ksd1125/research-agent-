@@ -74,7 +74,7 @@ export async function convertPdfToMarkdown(apiKey, pdfBase64, rawText) {
 
   // 방법 2: 텍스트 기반 변환 (폴백)
   if (!rawText) {
-    throw new Error('PDF 데이터와 텍스트 모두 없습니다.');
+    throw new Error('PDF 변환에 실패했습니다. Gemini API 오류이거나 PDF 형식이 지원되지 않습니다. "텍스트 붙여넣기" 탭을 이용해 주세요.');
   }
 
   const MAX_CHUNK = 25000;
