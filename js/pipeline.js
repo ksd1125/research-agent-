@@ -18,6 +18,7 @@ import {
   runAgent1,
   runAgent2,
   runAgent4Plus,
+  extractCorrelationMatrix,
   runReviewGuide,
   runQnA,
   createAbortController,
@@ -263,7 +264,20 @@ export async function runInitialPipeline(apiKey, selectedSections) {
       if (cm && cm.matrix && cm.variables) {
         console.log(`[Agent4+] ✅ correlation_matrix 추출 성공: ${cm.variables.length}변수`, cm.variables);
       } else {
-        console.warn('[Agent4+] ⚠️ correlation_matrix 미추출 (null 또는 형식 불일치). dataStructure.correlation_matrix:', cm);
+        console.warn('[Agent4+] ⚠️ correlation_matrix 미추출 — 전용 추출 시도');
+        // 2차 시도: 상관행렬 전용 추출
+        try {
+          const corrResult = await extractCorrelationMatrix(apiKey, inputText, dataStructure.variables || []);
+          if (corrResult) {
+            dataStructure.correlation_matrix = corrResult;
+            state.dataStructure = dataStructure;
+            console.log('[CorrelationExtractor] ✅ 2차 추출 성공, dataStructure에 반영됨');
+          } else {
+            console.warn('[CorrelationExtractor] 2차 추출도 실패 — 독립 데이터 생성으로 진행');
+          }
+        } catch (corrErr) {
+          console.warn('[CorrelationExtractor] 2차 추출 오류:', corrErr.message);
+        }
       }
     } catch (err) {
       console.warn('Agent 4+ (데이터 구조) 실패:', err.message);

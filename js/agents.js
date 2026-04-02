@@ -1277,6 +1277,81 @@ export async function runAgent4Plus(apiKey, paperText, paperContext, detectedMet
 }
 
 /* ============================================================
+   상관행렬 전용 추출 (Agent4+ 보완)
+   ============================================================ */
+
+/**
+ * 논문에서 상관행렬만 집중 추출하는 전용 API 호출
+ * Agent4+가 correlation_matrix를 null로 반환했을 때 2차 시도
+ * @param {string} apiKey
+ * @param {string} paperText — 논문 전문
+ * @param {Array} variables — Agent4+가 추출한 변수 목록
+ * @returns {Promise<Object|null>} — { variables: string[], matrix: number[][] } 또는 null
+ */
+export async function extractCorrelationMatrix(apiKey, paperText, variables) {
+  const varNames = variables
+    .filter(v => v.type === '연속' || v.type === '순서')
+    .map(v => `${v.name_en} (${v.name_kr})`)
+    .join(', ');
+
+  const prompt = `당신은 학술 논문에서 상관분석 표(Correlation Table)를 추출하는 전문가입니다.
+
+아래 논문 텍스트에서 상관분석 표(Correlation Matrix, 상관관계 표, Table 2, 표 2 등)를 찾아 JSON으로 반환하세요.
+
+## 추출 대상 변수
+${varNames}
+
+## 논문 텍스트
+${paperText.slice(0, 25000)}
+
+## 반환 형식
+반드시 아래 JSON 형식으로 반환하세요:
+{
+  "found": true,
+  "variables": ["var1_english", "var2_english", "var3_english"],
+  "matrix": [
+    [1.00, 0.35, 0.42],
+    [0.35, 1.00, 0.58],
+    [0.42, 0.58, 1.00]
+  ]
+}
+
+## 추출 규칙
+1. 논문의 상관분석 표에서 **Pearson r 값**을 찾으세요
+2. 표에서 1, 2, 3... 번호가 매겨진 변수들의 상관계수를 읽으세요
+3. variables 배열은 위 "추출 대상 변수"의 name_en(영문)만 사용하세요
+4. matrix는 대칭행렬이어야 합니다 (matrix[i][j] === matrix[j][i])
+5. 대각선은 반드시 1.00
+6. 논문에 r=.24 로 표기되어 있으면 0.24로 변환
+7. 논문에 **가 붙어있으면 (예: .24**) 숫자만 추출 (0.24)
+8. 하삼각행렬만 있으면 상삼각도 대칭으로 채우세요
+
+상관분석 표가 논문에 **없으면** 다음을 반환하세요:
+{ "found": false, "variables": [], "matrix": [] }
+
+절대로 상관계수를 추측하거나 만들어내지 마세요. 논문에 있는 수치만 사용하세요.`;
+
+  try {
+    const raw = await callGemini(apiKey, prompt, 4000, { jsonMode: true });
+    const result = safeParseJSON(raw);
+
+    if (result.found && Array.isArray(result.variables) && Array.isArray(result.matrix) && result.matrix.length >= 2) {
+      console.log('[CorrelationExtractor] ✅ 상관행렬 추출 성공:', result.variables.length, '변수');
+      return {
+        variables: result.variables,
+        matrix: result.matrix,
+      };
+    }
+
+    console.log('[CorrelationExtractor] 상관표 없음 또는 추출 실패');
+    return null;
+  } catch (err) {
+    console.warn('[CorrelationExtractor] API 호출 실패:', err.message);
+    return null;
+  }
+}
+
+/* ============================================================
    Agent 6+: 리뷰 & 대안 방법론 (v5 — 탭3 온디맨드)
    ============================================================ */
 
