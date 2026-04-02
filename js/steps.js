@@ -307,22 +307,31 @@ import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
 
-# Entity & Time 더미변수 생성
-entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
-time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+has_panel = 'entity_id' in df.columns and 'year' in df.columns
 
-# 모형 1: Entity FE + Time FE (더미변수 방식)
-X = pd.concat([df[['${treatment}']], entity_dummies, time_dummies], axis=1)
-X = sm.add_constant(X)
-model1 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
-print("=== Model 1: 기본 고정효과 모형 ===")
+if has_panel:
+    # Entity & Time 더미변수 생성
+    entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
+    time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+    X = pd.concat([df[['${treatment}']], entity_dummies, time_dummies], axis=1)
+    X = sm.add_constant(X)
+    model1 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
+else:
+    # 패널 구조 없음 → 일반 OLS + Robust SE
+    X = sm.add_constant(df[['${treatment}']])
+    model1 = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+
+print("=== Model 1: 기본 모형 ===")
 print(model1.summary().tables[1])`,
           r: `library(fixest)
 df <- read.csv('mock_data.csv')
 
-# 모형 1: Entity FE + Time FE (클러스터 SE)
-model1 <- feols(${outcome} ~ ${treatment} | entity_id + year,
-                data=df, cluster=~entity_id)
+if ("entity_id" %in% names(df) && "year" %in% names(df)) {
+  model1 <- feols(\${outcome} ~ \${treatment} | entity_id + year,
+                  data=df, cluster=~entity_id)
+} else {
+  model1 <- feols(\${outcome} ~ \${treatment}, data=df, vcov='hetero')
+}
 summary(model1)`
         }
       },
@@ -336,26 +345,34 @@ import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
 
-# Entity & Time 더미변수 생성
-entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
-time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+has_panel = 'entity_id' in df.columns and 'year' in df.columns
 
 # 통제변수 선택 (수치형만, 식별자 제외)
 numeric_cols = df.select_dtypes(include='number').columns.tolist()
-control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}', 'entity_id', 'year']]
+exclude = ['${outcome}', '${treatment}', 'entity_id', 'year']
+control_cols = [c for c in numeric_cols if c not in exclude]
 
-# 모형 2: FE + 통제변수
-X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1)
-X = sm.add_constant(X)
-model2 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
+if has_panel:
+    entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
+    time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+    X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1)
+    X = sm.add_constant(X)
+    model2 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
+else:
+    X = sm.add_constant(df[['${treatment}'] + control_cols[:4]])
+    model2 = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+
 print("=== Model 2: 통제변수 포함 ===")
 print(model2.summary().tables[1])`,
           r: `library(fixest)
 df <- read.csv('mock_data.csv')
 
-# 모형 2: 통제변수 포함
-model2 <- feols(${outcome} ~ ${treatment} + . | entity_id + year,
-                data=df, cluster=~entity_id)
+if ("entity_id" %in% names(df) && "year" %in% names(df)) {
+  model2 <- feols(\${outcome} ~ \${treatment} + . | entity_id + year,
+                  data=df, cluster=~entity_id)
+} else {
+  model2 <- feols(\${outcome} ~ \${treatment} + ., data=df, vcov='hetero')
+}
 summary(model2)`
         }
       },
@@ -366,9 +383,10 @@ summary(model2)`
         codeTemplate: {
           python: `import pandas as pd
 import statsmodels.api as sm
-from statsmodels.regression.mixed_linear_model import MixedLM
 
 df = pd.read_csv('mock_data.csv')
+
+has_panel = 'entity_id' in df.columns and 'year' in df.columns
 
 # 강건성 1: Pooled OLS (고정효과 없이)
 X_pooled = sm.add_constant(df[['${treatment}']])
@@ -376,25 +394,33 @@ pooled = sm.OLS(df['${outcome}'], X_pooled).fit(cov_type='HC1')
 print("=== Pooled OLS ===")
 print(f"계수: {pooled.params['${treatment}']:.4f}, p-value: {pooled.pvalues['${treatment}']:.4f}")
 
-# 강건성 2: Random Effects (Mixed Linear Model)
-re_model = MixedLM(df['${outcome}'], df[['${treatment}']], groups=df['entity_id'])
-re_result = re_model.fit(reml=True)
-print(f"\\n=== Random Effects (MixedLM) ===")
-print(re_result.summary().tables[1])`,
+if has_panel:
+    from statsmodels.regression.mixed_linear_model import MixedLM
+    re_model = MixedLM(df['${outcome}'], df[['${treatment}']], groups=df['entity_id'])
+    re_result = re_model.fit(reml=True)
+    print(f"\\n=== Random Effects (MixedLM) ===")
+    print(re_result.summary().tables[1])
+else:
+    # 패널 없으면 WLS로 강건성 확인
+    model_wls = sm.WLS(df['${outcome}'], sm.add_constant(df[['${treatment}']]),
+                       weights=1.0/(df['${outcome}'].var() + 1)).fit()
+    print(f"\\n=== WLS (가중최소제곱) ===")
+    print(f"계수: {model_wls.params['${treatment}']:.4f}, p-value: {model_wls.pvalues['${treatment}']:.4f}")`,
           r: `library(fixest)
-library(plm)
 df <- read.csv('mock_data.csv')
 
 # Pooled OLS
-pooled <- lm(${outcome} ~ ${treatment}, data=df)
+pooled <- lm(\${outcome} ~ \${treatment}, data=df)
 summary(pooled)
 
-# Hausman 검정 (FE vs RE)
-fe <- plm(${outcome} ~ ${treatment}, data=df,
-          index=c("entity_id","year"), model="within")
-re <- plm(${outcome} ~ ${treatment}, data=df,
-          index=c("entity_id","year"), model="random")
-phtest(fe, re)`
+if ("entity_id" %in% names(df) && "year" %in% names(df)) {
+  library(plm)
+  fe <- plm(\${outcome} ~ \${treatment}, data=df,
+            index=c("entity_id","year"), model="within")
+  re <- plm(\${outcome} ~ \${treatment}, data=df,
+            index=c("entity_id","year"), model="random")
+  phtest(fe, re)
+}`
         }
       },
       {
