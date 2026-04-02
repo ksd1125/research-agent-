@@ -303,23 +303,36 @@ if ("year" %in% names(df)) {
         description: '개체 고정효과와 시간 고정효과를 포함한 기본 모형을 추정합니다.',
         codeTemplate: {
           python: `import pandas as pd
+import numpy as np
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
+# 수치형 변환 (object 타입 방지)
+for col in df.columns:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+df = df.dropna()
 
 has_panel = 'entity_id' in df.columns and 'year' in df.columns
 
 if has_panel:
-    # Entity & Time 더미변수 생성
-    entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
-    time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
-    X = pd.concat([df[['${treatment}']], entity_dummies, time_dummies], axis=1)
+    entity_ids = df['entity_id'].copy()
+    # Entity & Time 더미변수 (개체 수 제한: 최대 50개)
+    n_entities = df['entity_id'].nunique()
+    if n_entities <= 50:
+        entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
+        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+        X = pd.concat([df[['${treatment}']], entity_dummies, time_dummies], axis=1).astype(float)
+    else:
+        # 개체 수 많으면 de-meaned FE 방식
+        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+        X = pd.concat([df[['${treatment}']], time_dummies], axis=1).astype(float)
     X = sm.add_constant(X)
-    model1 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
+    y = df['${outcome}'].astype(float)
+    model1 = sm.OLS(y, X).fit(cov_type='HC1')
 else:
-    # 패널 구조 없음 → 일반 OLS + Robust SE
-    X = sm.add_constant(df[['${treatment}']])
-    model1 = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+    X = sm.add_constant(df[['${treatment}']].astype(float))
+    y = df['${outcome}'].astype(float)
+    model1 = sm.OLS(y, X).fit(cov_type='HC1')
 
 print("=== Model 1: 기본 모형 ===")
 print(model1.summary().tables[1])`,
@@ -341,9 +354,13 @@ summary(model1)`
         description: '시간 가변 통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
         codeTemplate: {
           python: `import pandas as pd
+import numpy as np
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
+for col in df.columns:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+df = df.dropna()
 
 has_panel = 'entity_id' in df.columns and 'year' in df.columns
 
@@ -353,14 +370,21 @@ exclude = ['${outcome}', '${treatment}', 'entity_id', 'year']
 control_cols = [c for c in numeric_cols if c not in exclude]
 
 if has_panel:
-    entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
-    time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
-    X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1)
+    n_entities = df['entity_id'].nunique()
+    if n_entities <= 50:
+        entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
+        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+        X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1).astype(float)
+    else:
+        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
+        X = pd.concat([df[['${treatment}'] + control_cols[:4]], time_dummies], axis=1).astype(float)
     X = sm.add_constant(X)
-    model2 = sm.OLS(df['${outcome}'], X).fit(cov_type='cluster', cov_kwds={'groups': df['entity_id']})
+    y = df['${outcome}'].astype(float)
+    model2 = sm.OLS(y, X).fit(cov_type='HC1')
 else:
-    X = sm.add_constant(df[['${treatment}'] + control_cols[:4]])
-    model2 = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+    X = sm.add_constant(df[['${treatment}'] + control_cols[:4]].astype(float))
+    y = df['${outcome}'].astype(float)
+    model2 = sm.OLS(y, X).fit(cov_type='HC1')
 
 print("=== Model 2: 통제변수 포함 ===")
 print(model2.summary().tables[1])`,
@@ -382,30 +406,48 @@ summary(model2)`
         description: 'Pooled OLS 비교, 하위 표본 분석 등을 수행합니다.',
         codeTemplate: {
           python: `import pandas as pd
+import numpy as np
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
+for col in df.columns:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+df = df.dropna()
 
 has_panel = 'entity_id' in df.columns and 'year' in df.columns
 
 # 강건성 1: Pooled OLS (고정효과 없이)
-X_pooled = sm.add_constant(df[['${treatment}']])
-pooled = sm.OLS(df['${outcome}'], X_pooled).fit(cov_type='HC1')
+X_pooled = sm.add_constant(df[['${treatment}']].astype(float))
+y = df['${outcome}'].astype(float)
+pooled = sm.OLS(y, X_pooled).fit(cov_type='HC1')
 print("=== Pooled OLS ===")
 print(f"계수: {pooled.params['${treatment}']:.4f}, p-value: {pooled.pvalues['${treatment}']:.4f}")
 
 if has_panel:
     from statsmodels.regression.mixed_linear_model import MixedLM
-    re_model = MixedLM(df['${outcome}'], df[['${treatment}']], groups=df['entity_id'])
-    re_result = re_model.fit(reml=True)
-    print(f"\\n=== Random Effects (MixedLM) ===")
-    print(re_result.summary().tables[1])
+    try:
+        re_model = MixedLM(y, df[['${treatment}']].astype(float), groups=df['entity_id'])
+        re_result = re_model.fit(reml=True)
+        print(f"\\n=== Random Effects (MixedLM) ===")
+        print(re_result.summary().tables[1])
+    except Exception as e:
+        print(f"\\nRandom Effects 추정 실패: {e}")
+        print("Pooled OLS 결과를 참고해주세요.")
 else:
-    # 패널 없으면 WLS로 강건성 확인
-    model_wls = sm.WLS(df['${outcome}'], sm.add_constant(df[['${treatment}']]),
-                       weights=1.0/(df['${outcome}'].var() + 1)).fit()
-    print(f"\\n=== WLS (가중최소제곱) ===")
-    print(f"계수: {model_wls.params['${treatment}']:.4f}, p-value: {model_wls.pvalues['${treatment}']:.4f}")`,
+    # 비패널: 부트스트래핑 강건성
+    from scipy import stats as sp_stats
+    boot_coefs = []
+    for _ in range(1000):
+        idx = np.random.choice(len(df), len(df), replace=True)
+        Xb = sm.add_constant(df.iloc[idx][['${treatment}']].astype(float))
+        yb = df.iloc[idx]['${outcome}'].astype(float)
+        try:
+            boot_coefs.append(sm.OLS(yb, Xb).fit().params['${treatment}'])
+        except:
+            pass
+    ci = np.percentile(boot_coefs, [2.5, 97.5])
+    print(f"\\n=== Bootstrap 95% CI (1000회) ===")
+    print(f"계수 95% CI: [{ci[0]:.4f}, {ci[1]:.4f}]")`,
           r: `library(fixest)
 df <- read.csv('mock_data.csv')
 
