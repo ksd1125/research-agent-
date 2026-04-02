@@ -329,7 +329,9 @@ ${paperText}
 
 중요:
 - detected_methods는 가장 핵심적인 방법론 최대 ${API.maxMethods}개만 포함하세요.
+- detected_methods가 빈 배열([])이면 안 됩니다. 논문에 통계적 분석이 있다면 반드시 1개 이상의 방법론을 감지해야 합니다. 기술통계만 있는 논문이라도 "기술통계 분석"으로 감지하세요.
 - section_index는 반드시 논문의 주요 섹션을 최소 3개 이상 포함하세요 (서론/문헌검토/방법론/결과/결론 등).
+- analysis_design 필드는 **선택사항**입니다. 매개/조절/위계적 회귀 분석이 아니면 생략하거나 framework: "none"으로 설정하세요.
 
 출력 형식:
 {
@@ -475,8 +477,9 @@ export async function runAgent1(apiKey, paperText, extractedSections = []) {
   const prompt = buildAgent1Prompt(paperText, extractedSections);
   const raw = await callGemini(apiKey, prompt, API.tokens.agent1, { responseSchema: AGENT1_RESPONSE_SCHEMA });
 
+  let result;
   try {
-    return safeParseJSON(raw);
+    result = safeParseJSON(raw);
   } catch (err) {
     // 강제 복구 시도
     const start = raw.indexOf('{');
@@ -486,11 +489,37 @@ export async function runAgent1(apiKey, paperText, extractedSections = []) {
       const oc = (partial.match(/\{/g) || []).length - (partial.match(/\}/g) || []).length;
       for (let i = 0; i < ob; i++) partial += ']';
       for (let i = 0; i < oc; i++) partial += '}';
-      try { return JSON.parse(partial); }
+      try { result = JSON.parse(partial); }
       catch { throw new Error(MESSAGES.errors.agent1Parse + raw.substring(0, 400)); }
+    } else {
+      throw new Error(MESSAGES.errors.agent1NoJson + raw.substring(0, 400));
     }
-    throw new Error(MESSAGES.errors.agent1NoJson + raw.substring(0, 400));
   }
+
+  // detected_methods가 빈 배열이면 fallback 방법론 생성
+  if (!result.detected_methods || result.detected_methods.length === 0) {
+    const category = result.paper_context?.analysis_category || 'regression';
+    console.warn('[Agent1] detected_methods 빈 배열 → fallback 방법론 생성');
+    result.detected_methods = [{
+      raw_name: category === 'causal_inference' ? '인과추론 분석' :
+                category === 'experimental' ? '실험 설계 분석' :
+                category === 'sem' ? '구조방정식 모형' :
+                '회귀분석',
+      evidence_text: result.metadata?.summary || '논문 본문에서 감지',
+      target_result_location: '',
+      source_section: '분석 방법',
+      analysis_type: category === 'causal_inference' ? 'panel_FE' :
+                     category === 'experimental' ? 'ANOVA' :
+                     'OLS',
+      key_variables: {
+        outcome: result.paper_context?.data_characteristics || '종속변수',
+        treatment: '독립변수',
+        controls: '통제변수',
+      },
+    }];
+  }
+
+  return result;
 }
 
 /* ============================================================
@@ -1169,8 +1198,8 @@ ${keyVars.outcome ? `[종속변수]: ${keyVars.outcome}` : ''}
 ${keyVars.treatment ? `[핵심 독립변수]: ${keyVars.treatment}` : ''}
 ${keyVars.controls ? `[통제변수]: ${keyVars.controls}` : ''}
 
-논문 텍스트 (앞부분):
-${paperText.substring(0, 15000)}
+논문 텍스트:
+${paperText.substring(0, 25000)}
 
 아래 JSON 형식으로 출력하세요:
 {
