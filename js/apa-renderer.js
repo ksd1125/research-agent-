@@ -270,7 +270,7 @@ APA Figure caption (한국어)
 ===END_FIGURE_CAPTION===`;
 
   try {
-    const raw = await callGemini(apiKey, prompt, 2000);
+    const raw = await callGemini(apiKey, prompt, 4000);
     const result = parseApaReport(raw);
     if (!result.text) {
       console.warn('[APA] 파싱 결과 비어있음. raw 응답:', raw?.substring(0, 200));
