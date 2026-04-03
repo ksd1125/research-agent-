@@ -15,7 +15,7 @@ export const API = {
   defaultTemp: 0.1,
   /** 에이전트별 최대 토큰 설정 */
   tokens: {
-    agent1: 5000,        // 12개 카테고리 분류를 위해 증가
+    agent1: 8000,        // 12개 카테고리 + analysis_design + 섹션 인덱스
     agent2: 2000,
     agent3Meta: 500,
     agent3Code: 18000,   // 4-Phase(원천→전처리→분석→시각화) 코드 생성을 위해 증가
