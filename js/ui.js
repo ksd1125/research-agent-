@@ -489,13 +489,34 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
       return;
     }
 
+    // Step 네비게이션 바 생성
+    let navHtml = '<div class="step-nav-bar">';
+    result.steps.forEach((step, idx) => {
+      const label = step.title || `Step ${idx + 1}`;
+      navHtml += `<button class="step-nav-btn" data-nav-idx="${idx}">${label}</button>`;
+    });
+    navHtml += '</div>';
+
     // 스텝 카드 렌더링
-    let html = '';
+    let html = navHtml;
     result.steps.forEach((step, idx) => {
       html += renderStepCard(step, idx, methodIndex);
     });
 
     stepsContainer.innerHTML = html;
+
+    // 네비게이션 핸들러
+    document.querySelectorAll('.step-nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = btn.getAttribute('data-nav-idx');
+        const card = document.querySelector(`.step-card[data-step-idx="${idx}"]`);
+        if (card) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          card.classList.add('step-card-highlight');
+          setTimeout(() => card.classList.remove('step-card-highlight'), 1500);
+        }
+      });
+    });
 
     // 실행 버튼 핸들러 설정
     setupStepExecutionHandlers(methodIndex);
@@ -524,12 +545,13 @@ function renderStepCard(step, stepIdx, methodIndex) {
     html += `</div>`;
   }
 
-  // 코드 블록 (접을 수 있음)
+  // 코드 블록 (접을 수 있음, 편집 가능 textarea)
   html += `<div class="step-code-section">`;
   html += `<button class="code-toggle" data-step-idx="${stepIdx}">💻 코드 보기</button>`;
-  html += `<pre class="code-block" data-step-idx="${stepIdx}" style="display:none;">`;
-  html += `<code>${escapeCode(code)}</code>`;
-  html += `</pre>`;
+  html += `<div class="code-edit-wrap" data-step-idx="${stepIdx}" style="display:none;">`;
+  html += `<textarea class="code-textarea" data-step-idx="${stepIdx}" spellcheck="false">${escapeCode(code)}</textarea>`;
+  html += `<button class="btn-rerun" data-step-idx="${stepIdx}" data-step-id="${stepId}" title="수정된 코드로 재실행">🔄 재실행</button>`;
+  html += `</div>`;
   html += `</div>`;
 
   // 실행 버튼 영역
@@ -557,10 +579,10 @@ function setupStepExecutionHandlers(methodIndex) {
   codeToggles.forEach(btn => {
     btn.addEventListener('click', (e) => {
       const stepIdx = btn.getAttribute('data-step-idx');
-      const codeBlock = document.querySelector(`.code-block[data-step-idx="${stepIdx}"]`);
-      if (codeBlock) {
-        const isHidden = codeBlock.style.display === 'none';
-        codeBlock.style.display = isHidden ? 'block' : 'none';
+      const codeWrap = document.querySelector(`.code-edit-wrap[data-step-idx="${stepIdx}"]`);
+      if (codeWrap) {
+        const isHidden = codeWrap.style.display === 'none';
+        codeWrap.style.display = isHidden ? 'block' : 'none';
         btn.textContent = isHidden ? '💻 코드 숨기기' : '💻 코드 보기';
       }
     });
@@ -574,8 +596,8 @@ function setupStepExecutionHandlers(methodIndex) {
       const stepId = btn.getAttribute('data-step-id');
       const lang = currentLanguage;
 
-      const codeBlock = document.querySelector(`.code-block[data-step-idx="${stepIdx}"]`);
-      const code = codeBlock ? codeBlock.textContent : '';
+      const textarea = document.querySelector(`.code-textarea[data-step-idx="${stepIdx}"]`);
+      const code = textarea ? textarea.value : '';
 
       await executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx);
     });
@@ -587,8 +609,21 @@ function setupStepExecutionHandlers(methodIndex) {
     btn.addEventListener('click', async (e) => {
       const stepIdx = parseInt(btn.getAttribute('data-step-idx'), 10);
 
-      const codeBlock = document.querySelector(`.code-block[data-step-idx="${stepIdx}"]`);
-      const code = codeBlock ? codeBlock.textContent : '';
+      const textarea = document.querySelector(`.code-textarea[data-step-idx="${stepIdx}"]`);
+      const code = textarea ? textarea.value : '';
+
+      await executePythonStep(code, stepIdx);
+    });
+  });
+
+  // 🔄 재실행 버튼 핸들러 (수정된 코드로 Python 재실행)
+  const rerunButtons = document.querySelectorAll('.btn-rerun');
+  rerunButtons.forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const stepIdx = parseInt(btn.getAttribute('data-step-idx'), 10);
+
+      const textarea = document.querySelector(`.code-textarea[data-step-idx="${stepIdx}"]`);
+      const code = textarea ? textarea.value : '';
 
       await executePythonStep(code, stepIdx);
     });

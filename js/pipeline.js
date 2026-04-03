@@ -19,6 +19,7 @@ import {
   runAgent2,
   runAgent4Plus,
   extractCorrelationMatrix,
+  extractRegressionAndBuildCorr,
   runReviewGuide,
   runQnA,
   createAbortController,
@@ -273,7 +274,20 @@ export async function runInitialPipeline(apiKey, selectedSections) {
             state.dataStructure = dataStructure;
             console.log('[CorrelationExtractor] ✅ 2차 추출 성공, dataStructure에 반영됨');
           } else {
-            console.warn('[CorrelationExtractor] 2차 추출도 실패 — 독립 데이터 생성으로 진행');
+            // 3차 시도: Phase 6-C — 회귀계수 기반 상관행렬 역산
+            console.warn('[CorrelationExtractor] 2차 추출 실패 — Phase 6-C 회귀계수 역산 시도');
+            try {
+              const regCorr = await extractRegressionAndBuildCorr(apiKey, inputText, dataStructure.variables || []);
+              if (regCorr) {
+                dataStructure.correlation_matrix = regCorr;
+                state.dataStructure = dataStructure;
+                console.log('[Phase6C] ✅ 회귀계수 기반 상관행렬 역산 성공');
+              } else {
+                console.warn('[Phase6C] 역산 실패 — 독립 데이터 생성으로 진행');
+              }
+            } catch (regErr) {
+              console.warn('[Phase6C] 오류:', regErr.message);
+            }
           }
         } catch (corrErr) {
           console.warn('[CorrelationExtractor] 2차 추출 오류:', corrErr.message);

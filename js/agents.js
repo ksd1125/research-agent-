@@ -1381,6 +1381,200 @@ ${paperText.slice(0, 25000)}
 }
 
 /* ============================================================
+   Phase 6-C: 회귀계수 기반 상관행렬 역산
+   ============================================================ */
+
+/**
+ * 논문에서 보고된 회귀계수(B, β, R², p)를 추출하여 상관행렬을 역산
+ * 상관표가 없는 논문에서도 상관 데이터 생성 가능
+ * @param {string} apiKey
+ * @param {string} paperText — 논문 전문
+ * @param {Array} variables — Agent4+가 추출한 변수 목록
+ * @returns {Promise<Object|null>} — { variables: string[], matrix: number[][] } 또는 null
+ */
+export async function extractRegressionAndBuildCorr(apiKey, paperText, variables) {
+  const contVars = variables.filter(v => v.type === '연속' || v.type === '순서');
+  if (contVars.length < 2) return null;
+
+  const varList = contVars.map(v => `${v.name_en} (${v.name_kr}, role: ${v.role})`).join('\n');
+
+  const prompt = `당신은 학술 논문에서 회귀분석 결과표를 추출하는 전문가입니다.
+
+아래 논문에서 회귀분석 결과(Table)를 찾아 각 변수의 회귀계수를 추출하세요.
+
+## 분석 대상 변수
+${varList}
+
+## 논문 텍스트
+${paperText.slice(0, 25000)}
+
+## 반환 형식
+{
+  "found": true,
+  "outcome": "종속변수 name_en",
+  "r_squared": 0.53,
+  "coefficients": [
+    {
+      "variable": "변수 name_en",
+      "B": 0.47,
+      "beta": 0.35,
+      "se": 0.06,
+      "p": 0.001
+    }
+  ]
+}
+
+## 추출 규칙
+1. 회귀분석 결과표(Table)에서 비표준화 계수(B)와 표준화 계수(β/beta)를 모두 추출
+2. B만 있으면 B만, β만 있으면 β만 추출해도 됨
+3. p값은 < .001이면 0.001로 기록, *는 p<.05, **는 p<.01, ***는 p<.001
+4. R²(결정계수)는 모형 전체의 값
+5. variable은 위 "분석 대상 변수"의 name_en만 사용
+6. 여러 모형이 있으면 가장 핵심 모형(full model)의 결과만 추출
+7. 매개/조절 분석이면 최종 모형의 계수를 추출
+
+회귀분석 결과가 논문에 **없으면**:
+{ "found": false, "outcome": "", "r_squared": 0, "coefficients": [] }
+
+절대로 계수를 추측하지 마세요. 논문에 있는 수치만 사용하세요.`;
+
+  try {
+    const raw = await callGemini(apiKey, prompt, 4000, { jsonMode: true });
+    const result = safeParseJSON(raw);
+
+    if (!result.found || !Array.isArray(result.coefficients) || result.coefficients.length === 0) {
+      console.log('[Phase6C] 회귀계수 없음 또는 추출 실패');
+      return null;
+    }
+
+    console.log('[Phase6C] ✅ 회귀계수 추출 성공:', result.coefficients.length, '개 변수');
+
+    // 회귀계수 → 상관행렬 역산
+    const corrMatrix = buildCorrFromCoefficients(result, contVars);
+    return corrMatrix;
+  } catch (err) {
+    console.warn('[Phase6C] API 호출 실패:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 회귀계수(β 또는 B+SD)로부터 상관행렬을 역산
+ * 원리: 단순회귀에서 β ≈ r(x,y). 다중회귀에서는 근사치이지만 상관 구조 복원에 충분
+ * @param {Object} regResult — { outcome, r_squared, coefficients }
+ * @param {Array} variables — Agent4+의 연속형 변수 배열
+ * @returns {Object|null} — { variables: string[], matrix: number[][] }
+ */
+function buildCorrFromCoefficients(regResult, variables) {
+  const outcomeVar = regResult.outcome;
+  const coeffs = regResult.coefficients;
+  const rSquared = regResult.r_squared || 0;
+
+  // 사용할 변수 목록: outcome + coefficient에 있는 변수들
+  const varNames = [outcomeVar];
+  const corrWithOutcome = [1.0]; // outcome 자기 자신
+
+  for (const coef of coeffs) {
+    if (!coef.variable || coef.variable === outcomeVar) continue;
+    // 변수가 Agent4+ 목록에 있는지 확인
+    const exists = variables.find(v => v.name_en === coef.variable);
+    if (!exists) continue;
+
+    varNames.push(coef.variable);
+
+    // β(표준화 계수)가 있으면 그것이 r의 좋은 근사치
+    // B(비표준화)만 있으면 SD로 변환: β = B * (sd_x / sd_y)
+    let r;
+    if (coef.beta != null && coef.beta !== 0) {
+      r = coef.beta;
+    } else if (coef.B != null && exists.sd && exists.sd > 0) {
+      const outcomeVarInfo = variables.find(v => v.name_en === outcomeVar);
+      const sdY = outcomeVarInfo?.sd || 1;
+      r = coef.B * (exists.sd / sdY);
+    } else {
+      r = 0;
+    }
+
+    // r 범위 제한 [-0.95, 0.95]
+    r = Math.max(-0.95, Math.min(0.95, r));
+    corrWithOutcome.push(r);
+  }
+
+  if (varNames.length < 2) return null;
+
+  const n = varNames.length;
+  const matrix = [];
+
+  // 대칭 상관행렬 구축
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < n; j++) {
+      if (i === j) {
+        row.push(1.0);
+      } else if (i === 0) {
+        // outcome과의 상관: 추출한 β 값
+        row.push(Math.round(corrWithOutcome[j] * 100) / 100);
+      } else if (j === 0) {
+        // 대칭
+        row.push(Math.round(corrWithOutcome[i] * 100) / 100);
+      } else {
+        // 독립변수 간 상관: R²와 개별 r값으로 추정
+        // 근사: r(xi, xj) ≈ r(xi,y) * r(xj,y) * sign
+        const ri = corrWithOutcome[i];
+        const rj = corrWithOutcome[j];
+        let rij = ri * rj;
+        // 양의 정치성 보장을 위해 범위 축소
+        rij = Math.max(-0.7, Math.min(0.7, rij));
+        row.push(Math.round(rij * 100) / 100);
+      }
+    }
+    matrix.push(row);
+  }
+
+  // 양의 정치성(positive definiteness) 보정
+  const corrected = ensurePositiveDefinite(matrix);
+
+  console.log('[Phase6C] 역산 상관행렬:', varNames, corrected);
+  return { variables: varNames, matrix: corrected };
+}
+
+/**
+ * 행렬이 양의 정치(positive definite)가 아니면 보정
+ * 간단한 방법: 대각선 가중 보정 (eigenvalue가 음수이면 대각선 증가)
+ */
+function ensurePositiveDefinite(matrix) {
+  const n = matrix.length;
+  const result = matrix.map(row => [...row]);
+
+  // 간단한 Higham 근사: 대각선 우세 보장
+  for (let iter = 0; iter < 5; iter++) {
+    let needFix = false;
+
+    for (let i = 0; i < n; i++) {
+      let offDiagSum = 0;
+      for (let j = 0; j < n; j++) {
+        if (i !== j) offDiagSum += Math.abs(result[i][j]);
+      }
+      if (offDiagSum >= 1.0) {
+        needFix = true;
+        // 비대각 요소 축소
+        const scale = 0.9 / offDiagSum;
+        for (let j = 0; j < n; j++) {
+          if (i !== j) {
+            result[i][j] *= scale;
+            result[j][i] = result[i][j]; // 대칭 유지
+          }
+        }
+      }
+    }
+
+    if (!needFix) break;
+  }
+
+  return result;
+}
+
+/* ============================================================
    Agent 6+: 리뷰 & 대안 방법론 (v5 — 탭3 온디맨드)
    ============================================================ */
 
