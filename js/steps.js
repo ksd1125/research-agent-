@@ -246,229 +246,260 @@ ggplot(td, aes(x=estimate, y=term)) +
     causal_inference: [
       {
         id: 'preprocessing',
-        title: '패널 데이터 전처리',
-        description: '패널 구조(entity × time) 확인, 처리군/통제군 식별, 변수 변환을 수행합니다.',
+        title: '데이터 전처리',
+        description: '데이터 구조 확인, 변수 분포, 결측치를 점검합니다.',
         codeTemplate: {
           python: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv')
 
-# 패널 구조 확인
-if 'entity_id' in df.columns:
+# === 데이터 구조 확인 ===
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+has_panel = 'entity_id' in df.columns and 'year' in df.columns
+
+if has_panel:
     print(f"개체 수: {df['entity_id'].nunique()}")
-if 'year' in df.columns:
     print(f"시간 범위: {df['year'].min()} ~ {df['year'].max()}")
 print(f"총 관측치: {len(df)}")
+print(f"컬럼: {list(df.columns)}")
 
-# 수치형 변수만 기술통계 (패널 식별자 제외)
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+# 수치형 변수만 기술통계 (식별자 제외)
 numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
 print("\\n=== 수치형 변수 기술통계 ===")
 print(numeric_df.describe().round(3))
 
-# 처리변수 분포 (있는 경우)
-if '${treatment}' in df.columns:
-    vals = df['${treatment}']
-    if vals.dtype in ['int64','float64']:
-        print(f"\\n처리변수(${treatment}) 평균: {vals.mean():.4f}")
+# 변수명 안내 (코드에서 사용할 컬럼명)
+print("\\n=== 분석 변수 ===")
+target_y = '${outcome}'
+target_x = '${treatment}'
+if target_y in df.columns:
+    print(f"종속변수(Y): {target_y}")
+else:
+    candidates = [c for c in numeric_df.columns]
+    print(f"⚠️ '{target_y}' 컬럼 없음. 사용 가능: {candidates}")
+if target_x in df.columns:
+    print(f"독립변수(X): {target_x}")
+else:
+    candidates = [c for c in numeric_df.columns]
+    print(f"⚠️ '{target_x}' 컬럼 없음. 사용 가능: {candidates}")
 
 # 연도별 종속변수 평균
-if 'year' in df.columns and '${outcome}' in df.columns:
-    print("\\n=== 연도별 ${outcome} 평균 ===")
-    print(df.groupby('year')['${outcome}'].mean().round(3))`,
+if has_panel and target_y in df.columns:
+    print(f"\\n=== 연도별 {target_y} 평균 ===")
+    print(df.groupby('year')[target_y].mean().round(3))`,
           r: `library(dplyr)
 df <- read.csv('mock_data.csv')
-
-# 패널 구조 확인
+cat("총 관측치:", nrow(df), "\\n")
+cat("컬럼:", paste(names(df), collapse=", "), "\\n")
 if ("entity_id" %in% names(df)) cat("개체 수:", n_distinct(df$entity_id), "\\n")
 if ("year" %in% names(df)) cat("시간 범위:", min(df$year), "~", max(df$year), "\\n")
-cat("총 관측치:", nrow(df), "\\n")
-
-# 수치형 변수 기술통계 (식별자 제외)
 id_cols <- c("entity_id", "year", "time", "id", "ID")
 num_df <- df[sapply(df, is.numeric)]
 num_df <- num_df[, !names(num_df) %in% id_cols, drop=FALSE]
-summary(num_df)
-
-# 연도별 종속변수 평균
-if ("year" %in% names(df)) {
-  df |> group_by(year) |> summarise(mean_outcome = mean(${outcome}, na.rm=TRUE))
-}`
+summary(num_df)`
         }
       },
       {
         id: 'baseline_fe',
-        title: '기본 고정효과 모형 (Baseline FE)',
-        description: '개체 고정효과와 시간 고정효과를 포함한 기본 모형을 추정합니다.',
+        title: '기본 모형',
+        description: '핵심 독립변수와 종속변수의 관계를 추정합니다.',
         codeTemplate: {
           python: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
-# 수치형 변환 (object 타입 방지)
-for col in df.columns:
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-df = df.dropna()
 
-has_panel = 'entity_id' in df.columns and 'year' in df.columns
+# --- 변수 자동 감지 ---
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number')
+analysis_cols = [c for c in numeric_df.columns if c not in id_cols]
 
-if has_panel:
-    entity_ids = df['entity_id'].copy()
-    # Entity & Time 더미변수 (개체 수 제한: 최대 50개)
-    n_entities = df['entity_id'].nunique()
-    if n_entities <= 50:
-        entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
-        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
-        X = pd.concat([df[['${treatment}']], entity_dummies, time_dummies], axis=1).astype(float)
-    else:
-        # 개체 수 많으면 de-meaned FE 방식
-        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
-        X = pd.concat([df[['${treatment}']], time_dummies], axis=1).astype(float)
-    X = sm.add_constant(X)
-    y = df['${outcome}'].astype(float)
-    model1 = sm.OLS(y, X).fit(cov_type='HC1')
+target_y = '${outcome}' if '${outcome}' in df.columns else (analysis_cols[0] if analysis_cols else None)
+target_x = '${treatment}' if '${treatment}' in df.columns else (analysis_cols[1] if len(analysis_cols) > 1 else None)
+
+if not target_y or not target_x:
+    print(f"⚠️ 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
 else:
-    X = sm.add_constant(df[['${treatment}']].astype(float))
-    y = df['${outcome}'].astype(float)
-    model1 = sm.OLS(y, X).fit(cov_type='HC1')
+    print(f"종속변수: {target_y}, 독립변수: {target_x}")
+    y = pd.to_numeric(df[target_y], errors='coerce').dropna()
+    x = pd.to_numeric(df[target_x], errors='coerce')
+    valid = y.index.intersection(x.dropna().index)
+    y, x = y.loc[valid], x.loc[valid]
 
-print("=== Model 1: 기본 모형 ===")
-print(model1.summary().tables[1])`,
-          r: `library(fixest)
-df <- read.csv('mock_data.csv')
+    has_panel = 'entity_id' in df.columns and 'year' in df.columns
 
-if ("entity_id" %in% names(df) && "year" %in% names(df)) {
-  model1 <- feols(\${outcome} ~ \${treatment} | entity_id + year,
-                  data=df, cluster=~entity_id)
-} else {
-  model1 <- feols(\${outcome} ~ \${treatment}, data=df, vcov='hetero')
-}
-summary(model1)`
+    if has_panel:
+        # Within 변환 (개체 평균 제거) — 더미변수 없이 FE 추정
+        panel = df.loc[valid].copy()
+        panel['_y'] = y.values
+        panel['_x'] = x.values
+        entity_means_y = panel.groupby('entity_id')['_y'].transform('mean')
+        entity_means_x = panel.groupby('entity_id')['_x'].transform('mean')
+        y_demean = panel['_y'] - entity_means_y
+        x_demean = panel['_x'] - entity_means_x
+        X = sm.add_constant(x_demean.astype(float))
+        model1 = sm.OLS(y_demean.astype(float), X).fit(cov_type='HC1')
+        print("=== Model 1: 고정효과 모형 (Within 변환) ===")
+    else:
+        X = sm.add_constant(x.astype(float))
+        model1 = sm.OLS(y.astype(float), X).fit(cov_type='HC1')
+        print("=== Model 1: OLS ===")
+
+    print(model1.summary().tables[1])
+    print(f"\\nR-squared: {model1.rsquared:.4f}")
+    print(f"관측치: {len(y)}")`,
+          r: `df <- read.csv('mock_data.csv')
+num_cols <- names(df)[sapply(df, is.numeric)]
+id_cols <- c("entity_id", "year", "time", "id", "ID")
+analysis_cols <- setdiff(num_cols, id_cols)
+cat("분석 가능 변수:", paste(analysis_cols, collapse=", "), "\\n")
+if (length(analysis_cols) >= 2) {
+  f <- as.formula(paste(analysis_cols[1], "~", analysis_cols[2]))
+  model1 <- lm(f, data=df)
+  summary(model1)
+}`
         }
       },
       {
         id: 'full_model_fe',
         title: '확장 모형 (통제변수 포함)',
-        description: '시간 가변 통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
+        description: '통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
         codeTemplate: {
           python: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
-for col in df.columns:
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-df = df.dropna()
 
-has_panel = 'entity_id' in df.columns and 'year' in df.columns
+# --- 변수 자동 감지 ---
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number')
+analysis_cols = [c for c in numeric_df.columns if c not in id_cols]
 
-# 통제변수 선택 (수치형만, 식별자 제외)
-numeric_cols = df.select_dtypes(include='number').columns.tolist()
-exclude = ['${outcome}', '${treatment}', 'entity_id', 'year']
-control_cols = [c for c in numeric_cols if c not in exclude]
+target_y = '${outcome}' if '${outcome}' in df.columns else (analysis_cols[0] if analysis_cols else None)
+target_x = '${treatment}' if '${treatment}' in df.columns else (analysis_cols[1] if len(analysis_cols) > 1 else None)
 
-if has_panel:
-    n_entities = df['entity_id'].nunique()
-    if n_entities <= 50:
-        entity_dummies = pd.get_dummies(df['entity_id'], prefix='entity', drop_first=True, dtype=float)
-        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
-        X = pd.concat([df[['${treatment}'] + control_cols[:4]], entity_dummies, time_dummies], axis=1).astype(float)
-    else:
-        time_dummies = pd.get_dummies(df['year'], prefix='year', drop_first=True, dtype=float)
-        X = pd.concat([df[['${treatment}'] + control_cols[:4]], time_dummies], axis=1).astype(float)
-    X = sm.add_constant(X)
-    y = df['${outcome}'].astype(float)
-    model2 = sm.OLS(y, X).fit(cov_type='HC1')
+if not target_y or not target_x:
+    print(f"⚠️ 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
 else:
-    X = sm.add_constant(df[['${treatment}'] + control_cols[:4]].astype(float))
-    y = df['${outcome}'].astype(float)
-    model2 = sm.OLS(y, X).fit(cov_type='HC1')
+    # 통제변수: 종속/독립 제외한 나머지 수치형
+    control_cols = [c for c in analysis_cols if c not in [target_y, target_x]][:4]
+    print(f"종속: {target_y}, 독립: {target_x}, 통제: {control_cols}")
 
-print("=== Model 2: 통제변수 포함 ===")
-print(model2.summary().tables[1])`,
-          r: `library(fixest)
-df <- read.csv('mock_data.csv')
+    cols_to_use = [target_y, target_x] + control_cols
+    sub = df[cols_to_use].apply(pd.to_numeric, errors='coerce').dropna()
+    y = sub[target_y].astype(float)
 
-if ("entity_id" %in% names(df) && "year" %in% names(df)) {
-  model2 <- feols(\${outcome} ~ \${treatment} + . | entity_id + year,
-                  data=df, cluster=~entity_id)
-} else {
-  model2 <- feols(\${outcome} ~ \${treatment} + ., data=df, vcov='hetero')
-}
-summary(model2)`
+    has_panel = 'entity_id' in df.columns and 'year' in df.columns
+
+    if has_panel:
+        panel = df.loc[sub.index].copy()
+        for col in cols_to_use:
+            panel[col] = sub[col].values
+        for col in cols_to_use:
+            panel[col] = panel[col] - panel.groupby('entity_id')[col].transform('mean')
+        y = panel[target_y].astype(float)
+        X = sm.add_constant(panel[[target_x] + control_cols].astype(float))
+        model2 = sm.OLS(y, X).fit(cov_type='HC1')
+        print("=== Model 2: FE + 통제변수 (Within 변환) ===")
+    else:
+        X = sm.add_constant(sub[[target_x] + control_cols].astype(float))
+        model2 = sm.OLS(y, X).fit(cov_type='HC1')
+        print("=== Model 2: OLS + 통제변수 ===")
+
+    print(model2.summary().tables[1])
+    print(f"\\nR-squared: {model2.rsquared:.4f}")
+    print(f"관측치: {len(y)}")`,
+          r: `df <- read.csv('mock_data.csv')
+num_cols <- names(df)[sapply(df, is.numeric)]
+id_cols <- c("entity_id", "year", "time", "id", "ID")
+analysis_cols <- setdiff(num_cols, id_cols)
+if (length(analysis_cols) >= 3) {
+  f <- as.formula(paste(analysis_cols[1], "~", paste(analysis_cols[-1], collapse=" + ")))
+  model2 <- lm(f, data=df)
+  summary(model2)
+}`
         }
       },
       {
         id: 'robustness',
         title: '강건성 검정',
-        description: 'Pooled OLS 비교, 하위 표본 분석 등을 수행합니다.',
+        description: 'Pooled OLS 비교, 부트스트래핑 등을 수행합니다.',
         codeTemplate: {
           python: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv')
-for col in df.columns:
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-df = df.dropna()
 
-has_panel = 'entity_id' in df.columns and 'year' in df.columns
+# --- 변수 자동 감지 ---
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number')
+analysis_cols = [c for c in numeric_df.columns if c not in id_cols]
 
-# 강건성 1: Pooled OLS (고정효과 없이)
-X_pooled = sm.add_constant(df[['${treatment}']].astype(float))
-y = df['${outcome}'].astype(float)
-pooled = sm.OLS(y, X_pooled).fit(cov_type='HC1')
-print("=== Pooled OLS ===")
-print(f"계수: {pooled.params['${treatment}']:.4f}, p-value: {pooled.pvalues['${treatment}']:.4f}")
+target_y = '${outcome}' if '${outcome}' in df.columns else (analysis_cols[0] if analysis_cols else None)
+target_x = '${treatment}' if '${treatment}' in df.columns else (analysis_cols[1] if len(analysis_cols) > 1 else None)
 
-if has_panel:
-    from statsmodels.regression.mixed_linear_model import MixedLM
-    try:
-        re_model = MixedLM(y, df[['${treatment}']].astype(float), groups=df['entity_id'])
-        re_result = re_model.fit(reml=True)
-        print(f"\\n=== Random Effects (MixedLM) ===")
-        print(re_result.summary().tables[1])
-    except Exception as e:
-        print(f"\\nRandom Effects 추정 실패: {e}")
-        print("Pooled OLS 결과를 참고해주세요.")
+if not target_y or not target_x:
+    print(f"⚠️ 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
 else:
-    # 비패널: 부트스트래핑 강건성
-    from scipy import stats as sp_stats
+    sub = df[[target_y, target_x]].apply(pd.to_numeric, errors='coerce').dropna()
+    y = sub[target_y].astype(float)
+    x = sub[target_x].astype(float)
+
+    # Pooled OLS
+    X_pooled = sm.add_constant(x)
+    pooled = sm.OLS(y, X_pooled).fit(cov_type='HC1')
+    print("=== Pooled OLS (Robust SE) ===")
+    print(f"계수({target_x}): {pooled.params.iloc[1]:.4f}")
+    print(f"SE: {pooled.bse.iloc[1]:.4f}")
+    print(f"p-value: {pooled.pvalues.iloc[1]:.4f}")
+    print(f"R²: {pooled.rsquared:.4f}")
+
+    # 부트스트래핑 CI
     boot_coefs = []
     for _ in range(1000):
-        idx = np.random.choice(len(df), len(df), replace=True)
-        Xb = sm.add_constant(df.iloc[idx][['${treatment}']].astype(float))
-        yb = df.iloc[idx]['${outcome}'].astype(float)
+        idx = np.random.choice(len(sub), len(sub), replace=True)
+        yb = y.iloc[idx]
+        Xb = sm.add_constant(x.iloc[idx])
         try:
-            boot_coefs.append(sm.OLS(yb, Xb).fit().params['${treatment}'])
+            boot_coefs.append(sm.OLS(yb, Xb).fit().params.iloc[1])
         except:
             pass
-    ci = np.percentile(boot_coefs, [2.5, 97.5])
-    print(f"\\n=== Bootstrap 95% CI (1000회) ===")
-    print(f"계수 95% CI: [{ci[0]:.4f}, {ci[1]:.4f}]")`,
-          r: `library(fixest)
-df <- read.csv('mock_data.csv')
+    if boot_coefs:
+        ci = np.percentile(boot_coefs, [2.5, 97.5])
+        print(f"\\n=== Bootstrap 95% CI (1000회) ===")
+        print(f"계수 95% CI: [{ci[0]:.4f}, {ci[1]:.4f}]")
 
-# Pooled OLS
-pooled <- lm(\${outcome} ~ \${treatment}, data=df)
-summary(pooled)
-
-if ("entity_id" %in% names(df) && "year" %in% names(df)) {
-  library(plm)
-  fe <- plm(\${outcome} ~ \${treatment}, data=df,
-            index=c("entity_id","year"), model="within")
-  re <- plm(\${outcome} ~ \${treatment}, data=df,
-            index=c("entity_id","year"), model="random")
-  phtest(fe, re)
+    has_panel = 'entity_id' in df.columns
+    if has_panel:
+        try:
+            from statsmodels.regression.mixed_linear_model import MixedLM
+            groups = df.loc[sub.index, 'entity_id']
+            re_model = MixedLM(y, sm.add_constant(x), groups=groups)
+            re_result = re_model.fit(reml=True)
+            print(f"\\n=== Random Effects (MixedLM) ===")
+            print(re_result.summary().tables[1])
+        except Exception as e:
+            print(f"\\nRandom Effects 추정 실패: {e}")`,
+          r: `df <- read.csv('mock_data.csv')
+num_cols <- names(df)[sapply(df, is.numeric)]
+id_cols <- c("entity_id", "year", "time", "id", "ID")
+analysis_cols <- setdiff(num_cols, id_cols)
+if (length(analysis_cols) >= 2) {
+  f <- as.formula(paste(analysis_cols[1], "~", analysis_cols[2]))
+  pooled <- lm(f, data=df)
+  cat("=== Pooled OLS ===\\n")
+  summary(pooled)
 }`
         }
       },
       {
         id: 'visualization',
         title: '시각화',
-        description: 'Event-study plot, 계수 비교 forest plot을 생성합니다.',
+        description: '주요 변수의 추이와 분포를 시각화합니다.',
         codeTemplate: {
           python: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -476,48 +507,60 @@ import numpy as np
 
 df = pd.read_csv('mock_data.csv')
 
-# Event-study style plot: 연도별 종속변수 추이
-if 'year' in df.columns and '${treatment}' in df.columns:
-    treated = df[df['${treatment}']==1].groupby('year')['${outcome}'].mean()
-    control = df[df['${treatment}']==0].groupby('year')['${outcome}'].mean()
+# --- 변수 자동 감지 ---
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number')
+analysis_cols = [c for c in numeric_df.columns if c not in id_cols]
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(treated.index, treated.values, 'o-', label='처리군', color='#D32F2F')
-    ax.plot(control.index, control.values, 's--', label='통제군', color='#185FA5')
-    ax.set_xlabel('연도')
-    ax.set_ylabel('${outcome} 평균')
-    ax.set_title('처리군 vs 통제군 추이 비교')
-    ax.legend()
+target_y = '${outcome}' if '${outcome}' in df.columns else (analysis_cols[0] if analysis_cols else None)
+target_x = '${treatment}' if '${treatment}' in df.columns else (analysis_cols[1] if len(analysis_cols) > 1 else None)
+has_panel = 'year' in df.columns
+
+if target_y and has_panel:
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # 1. 연도별 추이
+    yearly = df.groupby('year')[target_y].mean()
+    axes[0].plot(yearly.index, yearly.values, 'o-', color='#185FA5', linewidth=2)
+    axes[0].set_xlabel('연도')
+    axes[0].set_ylabel(target_y)
+    axes[0].set_title(f'연도별 {target_y} 평균 추이')
+
+    # 2. 산점도 (독립 vs 종속)
+    if target_x:
+        x_data = pd.to_numeric(df[target_x], errors='coerce')
+        y_data = pd.to_numeric(df[target_y], errors='coerce')
+        valid = x_data.notna() & y_data.notna()
+        axes[1].scatter(x_data[valid], y_data[valid], alpha=0.3, s=10, color='#D32F2F')
+        axes[1].set_xlabel(target_x)
+        axes[1].set_ylabel(target_y)
+        axes[1].set_title(f'{target_x} vs {target_y}')
+
     plt.tight_layout()
     plt.show()
-elif 'year' in df.columns:
-    yearly = df.groupby('year')['${outcome}'].mean()
+elif target_y and target_x:
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(yearly.index, yearly.values, 'o-', color='#185FA5')
-    ax.set_xlabel('연도')
-    ax.set_ylabel('${outcome} 평균')
-    ax.set_title('연도별 ${outcome} 추이')
+    x_data = pd.to_numeric(df[target_x], errors='coerce')
+    y_data = pd.to_numeric(df[target_y], errors='coerce')
+    valid = x_data.notna() & y_data.notna()
+    ax.scatter(x_data[valid], y_data[valid], alpha=0.3, s=15, color='#185FA5')
+    ax.set_xlabel(target_x)
+    ax.set_ylabel(target_y)
+    ax.set_title(f'{target_x} vs {target_y}')
     plt.tight_layout()
-    plt.show()`,
+    plt.show()
+else:
+    print("시각화할 변수를 찾을 수 없습니다.")`,
           r: `library(ggplot2)
-library(dplyr)
 df <- read.csv('mock_data.csv')
-
-# 연도별 종속변수 추이
-if ("year" %in% names(df) & "${treatment}" %in% names(df)) {
-  trends <- df |>
-    group_by(year, ${treatment}) |>
-    summarise(mean_y = mean(${outcome}), .groups="drop") |>
-    mutate(group = ifelse(${treatment}==1, "처리군", "통제군"))
-
-  ggplot(trends, aes(x=year, y=mean_y, color=group)) +
-    geom_line(size=1) + geom_point(size=2) +
-    labs(title="처리군 vs 통제군 추이 비교", x="연도", y="${outcome}") +
+num_cols <- names(df)[sapply(df, is.numeric)]
+id_cols <- c("entity_id", "year", "time", "id", "ID")
+analysis_cols <- setdiff(num_cols, id_cols)
+if (length(analysis_cols) >= 2) {
+  ggplot(df, aes_string(x=analysis_cols[2], y=analysis_cols[1])) +
+    geom_point(alpha=0.3) + geom_smooth(method="lm") +
+    labs(title=paste(analysis_cols[2], "vs", analysis_cols[1])) +
     theme_minimal()
-} else if ("year" %in% names(df)) {
-  df |> group_by(year) |> summarise(mean_y = mean(${outcome})) |>
-    ggplot(aes(x=year, y=mean_y)) + geom_line() + geom_point() +
-    labs(title="연도별 ${outcome} 추이") + theme_minimal()
 }`
         }
       }
