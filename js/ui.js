@@ -755,8 +755,29 @@ async function executePythonStep(code, stepIdx) {
       return;
     }
 
+    // 변수 자동감지 코드 주입 (모든 Python 실행 시 공통)
+    // 이미 outcome/treatment/mediator 등이 정의되어 있으면 스킵
+    const autoDetectPrefix = `
+# === [AUTO] 변수 자동감지 ===
+import pandas as pd
+try:
+    outcome
+except NameError:
+    _df_check = pd.read_csv('mock_data.csv')
+    _num_df = _df_check.select_dtypes(include='number')
+    _skip_cols = ['id', 'ID', 'entity_id', 'Unnamed: 0', 'year', 'time']
+    _num_cols = [c for c in _num_df.columns if c not in _skip_cols]
+    outcome = _num_cols[0] if len(_num_cols) > 0 else None
+    treatment = _num_cols[1] if len(_num_cols) > 1 else None
+    _remaining = [c for c in _num_cols if c != outcome and c != treatment]
+    mediator = _remaining[0] if len(_remaining) > 0 else None
+    moderator = _remaining[1] if len(_remaining) > 1 else None
+    del _df_check, _num_df, _skip_cols, _num_cols, _remaining
+`;
+    const finalCode = autoDetectPrefix + '\n' + code;
+
     // 실행
-    const result = await runPython(code, csvData);
+    const result = await runPython(finalCode, csvData);
 
     // 결과 렌더링
     let html = '<div class="python-execution-result">';

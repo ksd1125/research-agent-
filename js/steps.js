@@ -112,6 +112,20 @@ function getCategorySpecificSteps(category, analysisType, keyVars, paperContext)
   const treatment = keyVars.treatment || 'treatment_var';
   const controls = keyVars.controls || 'control_vars';
 
+  // 공통 변수 자동감지 코드 (모든 카테고리에서 재사용)
+  const autoDetectBase = `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+_skip = ['id', 'ID', 'entity_id', 'Unnamed: 0', 'year', 'time']
+num_cols = [c for c in numeric_df.columns if c not in _skip]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+
+if outcome: print(f"종속변수(Y): {outcome}")
+if treatment: print(f"독립변수(X): {treatment}")`;
+
   const stepsMap = {
     regression: [
       {
@@ -123,27 +137,12 @@ function getCategorySpecificSteps(category, analysisType, keyVars, paperContext)
 import numpy as np
 
 df = pd.read_csv('mock_data.csv')
-
-# 로그 변환 (필요 시)
-# df['log_${outcome}'] = np.log(df['${outcome}'] + 1)
-
-# 결측치 처리
 df = df.dropna()
+${autoDetectBase}
 
-# 더미 변수 생성 (범주형 변수)
-# df = pd.get_dummies(df, columns=['category_var'], drop_first=True)
-
-print(f"전처리 후 데이터: {df.shape[0]}행 × {df.shape[1]}열")
+print(f"\\n전처리 후 데이터: {df.shape[0]}행 × {df.shape[1]}열")
 print(df.head())`,
-          r: `library(dplyr)
-df <- read.csv('mock_data.csv')
-
-# 결측치 처리
-df <- na.omit(df)
-
-# 로그 변환 (필요 시)
-# df$log_outcome <- log(df$${outcome} + 1)
-
+          r: `df <- read.csv('mock_data.csv') |> na.omit()
 cat(sprintf("전처리 후 데이터: %d행 × %d열\\n", nrow(df), ncol(df)))
 head(df)`
         }
@@ -157,19 +156,18 @@ head(df)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectBase}
 
 # 모형 1: 기본 모형 (핵심 독립변수만)
-X1 = sm.add_constant(df[['${treatment}']])
-model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
-print("=== Model 1: 기본 모형 ===")
+X1 = sm.add_constant(df[[treatment]])
+model1 = sm.OLS(df[outcome], X1).fit(cov_type='HC1')
+print("\\n=== Model 1: 기본 모형 ===")
 print(model1.summary())`,
-          r: `library(lmtest)
-library(sandwich)
-df <- read.csv('mock_data.csv') |> na.omit()
-
-# 모형 1: 기본 모형
-model1 <- lm(${outcome} ~ ${treatment}, data=df)
-coeftest(model1, vcov=vcovHC(model1, type="HC1"))`
+          r: `df <- read.csv('mock_data.csv') |> na.omit()
+nums <- names(Filter(is.numeric, df))
+y <- nums[1]; x <- nums[2]
+f <- as.formula(paste(y, "~", x))
+summary(lm(f, data=df))`
         }
       },
       {
@@ -181,21 +179,17 @@ coeftest(model1, vcov=vcovHC(model1, type="HC1"))`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectBase}
 
 # 모형 2: 통제변수 포함
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
-numeric_cols = df.select_dtypes(include='number').columns.tolist()
-control_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols]
-X2 = sm.add_constant(df[['${treatment}'] + control_cols[:5]])
-model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
-print("=== Model 2: 통제변수 포함 ===")
+control_cols = [c for c in remaining][:5]
+X2 = sm.add_constant(df[[treatment] + control_cols])
+model2 = sm.OLS(df[outcome], X2).fit(cov_type='HC1')
+print("\\n=== Model 2: 통제변수 포함 ===")
 print(model2.summary())`,
           r: `df <- read.csv('mock_data.csv') |> na.omit()
-
-# 모형 2: 통제변수 포함
-model2 <- lm(${outcome} ~ ., data=df)
-summary(model2)
-coeftest(model2, vcov=vcovHC(model2, type="HC1"))`
+model2 <- lm(as.formula(paste(names(df)[1], "~ .")), data=Filter(is.numeric, df))
+summary(model2)`
         }
       },
       {
@@ -209,10 +203,11 @@ import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
-numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
-X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
-model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+${autoDetectBase}
+
+numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in _skip if c in df.columns], errors='ignore')
+X = sm.add_constant(numeric_df.drop(columns=[outcome], errors='ignore'))
+model = sm.OLS(df[outcome], X).fit(cov_type='HC1')
 
 # 계수 Forest Plot
 fig, ax = plt.subplots(figsize=(8, 5))
@@ -586,9 +581,9 @@ print(df.describe().round(3))
 
 # 공간적 분포 확인
 print("\\n=== 종속변수 분포 ===")
-print(f"평균: {df['${outcome}'].mean():.3f}")
-print(f"표준편차: {df['${outcome}'].std():.3f}")
-print(f"왜도: {df['${outcome}'].skew():.3f}")`,
+print(f"평균: {df[outcome].mean():.3f}")
+print(f"표준편차: {df[outcome].std():.3f}")
+print(f"왜도: {df[outcome].skew():.3f}")`,
           r: `library(dplyr)
 df <- read.csv('mock_data.csv')
 summary(df)
@@ -607,8 +602,8 @@ import pandas as pd
 df = pd.read_csv('mock_data.csv').dropna()
 
 # OLS 기준 모형
-X = sm.add_constant(df[['${treatment}']])
-model_ols = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+X = sm.add_constant(df[[treatment]])
+model_ols = sm.OLS(df[outcome], X).fit(cov_type='HC1')
 print("=== OLS 기준 모형 ===")
 print(model_ols.summary())
 
@@ -639,12 +634,12 @@ df = pd.read_csv('mock_data.csv').dropna()
 region_col = df.columns[0]  # 첫 번째 열을 지역 변수로 가정
 df_dummies = pd.get_dummies(df, columns=[region_col], drop_first=True, dtype=int)
 
-X = sm.add_constant(df_dummies.drop(columns=['${outcome}']))
-model_fe = sm.OLS(df_dummies['${outcome}'], X).fit(cov_type='HC1')
+X = sm.add_constant(df_dummies.drop(columns=[outcome]))
+model_fe = sm.OLS(df_dummies[outcome], X).fit(cov_type='HC1')
 print("=== 지역 고정효과 모형 ===")
 print(f"R²: {model_fe.rsquared:.4f}")
 print(f"Adj R²: {model_fe.rsquared_adj:.4f}")
-print(f"${treatment} 계수: {model_fe.params['${treatment}']:.4f} (p={model_fe.pvalues['${treatment}']:.4f})")`,
+print(f"${treatment} 계수: {model_fe.params[treatment]:.4f} (p={model_fe.pvalues[treatment]:.4f})")`,
           r: `library(lmtest)
 df <- read.csv('mock_data.csv') |> na.omit()
 
@@ -668,7 +663,7 @@ fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
 # 지역별 평균 비교
 region_col = df.columns[0]
-region_means = df.groupby(region_col)['${outcome}'].mean().sort_values()
+region_means = df.groupby(region_col)[outcome].mean().sort_values()
 axes[0].barh(range(min(len(region_means),20)), region_means.values[:20])
 axes[0].set_yticks(range(min(len(region_means),20)))
 axes[0].set_yticklabels(region_means.index[:20], fontsize=8)
@@ -676,10 +671,10 @@ axes[0].set_xlabel('평균 ${outcome}')
 axes[0].set_title('지역별 ${outcome} 평균')
 
 # 핵심 변수 산점도
-axes[1].scatter(df['${treatment}'], df['${outcome}'], alpha=0.4, s=20)
-z = np.polyfit(df['${treatment}'].dropna(), df['${outcome}'].dropna(), 1)
+axes[1].scatter(df[treatment], df[outcome], alpha=0.4, s=20)
+z = np.polyfit(df[treatment].dropna(), df[outcome].dropna(), 1)
 p = np.poly1d(z)
-x_line = np.linspace(df['${treatment}'].min(), df['${treatment}'].max(), 100)
+x_line = np.linspace(df[treatment].min(), df[treatment].max(), 100)
 axes[1].plot(x_line, p(x_line), 'r--', alpha=0.8)
 axes[1].set_xlabel('${treatment}')
 axes[1].set_ylabel('${outcome}')
@@ -715,7 +710,7 @@ print(f"관측치 수: {len(df)}")
 print(f"열: {list(df.columns)}")
 
 # 종속변수 시계열 특성
-y = df['${outcome}']
+y = df[outcome]
 print(f"\\n=== ${outcome} 시계열 특성 ===")
 print(f"평균: {y.mean():.3f}")
 print(f"표준편차: {y.std():.3f}")
@@ -742,7 +737,7 @@ import numpy as np
 from statsmodels.tsa.stattools import adfuller, kpss
 
 df = pd.read_csv('mock_data.csv')
-y = df['${outcome}'].dropna()
+y = df[outcome].dropna()
 
 # ADF 검정 (H0: 단위근 존재 = 비정상)
 adf_result = adfuller(y, autolag='AIC')
@@ -781,7 +776,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 df = pd.read_csv('mock_data.csv')
-y = df['${outcome}'].dropna().values
+y = df[outcome].dropna().values
 
 # ARIMA 모형 탐색 (간단한 그리드 서치)
 best_aic = np.inf
@@ -825,7 +820,7 @@ import numpy as np
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
 df = pd.read_csv('mock_data.csv')
-y = df['${outcome}'].dropna()
+y = df[outcome].dropna()
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
@@ -878,8 +873,8 @@ from sklearn.preprocessing import StandardScaler
 df = pd.read_csv('mock_data.csv').dropna()
 
 # 특성과 타깃 분리
-X = df.drop(columns=['${outcome}'])
-y = df['${outcome}']
+X = df.drop(columns=[outcome])
+y = df[outcome]
 
 # 수치형만 선택
 X = X.select_dtypes(include=[np.number])
@@ -917,8 +912,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = df.drop(columns=['${outcome}']).select_dtypes(include=[np.number])
-y = df['${outcome}']
+X = df.drop(columns=[outcome]).select_dtypes(include=[np.number])
+y = df[outcome]
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # Random Forest
@@ -959,8 +954,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = df.drop(columns=['${outcome}']).select_dtypes(include=[np.number])
-y = df['${outcome}']
+X = df.drop(columns=[outcome]).select_dtypes(include=[np.number])
+y = df[outcome]
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 rf = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=5)
@@ -991,8 +986,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = df.drop(columns=['${outcome}']).select_dtypes(include=[np.number])
-y = df['${outcome}']
+X = df.drop(columns=[outcome]).select_dtypes(include=[np.number])
+y = df[outcome]
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 rf = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=5)
@@ -1206,7 +1201,7 @@ print(f"표본 크기: {len(df)}")
 print(df.describe().round(3))
 
 # 종속변수 분포 특성 (사전분포 설정 참고)
-y = df['${outcome}']
+y = df[outcome]
 print(f"\\n=== ${outcome} 분포 특성 ===")
 print(f"평균: {y.mean():.3f}")
 print(f"표준편차: {y.std():.3f}")
@@ -1234,12 +1229,12 @@ import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
 
-X = sm.add_constant(df[['${treatment}']])
-model = sm.OLS(df['${outcome}'], X).fit()
+X = sm.add_constant(df[[treatment]])
+model = sm.OLS(df[outcome], X).fit()
 print("=== MLE 기준 모형 (비교용) ===")
 print(model.summary())
 print(f"\\n비교 포인트:")
-print(f"  ${treatment} 계수: {model.params['${treatment}']:.4f}")
+print(f"  ${treatment} 계수: {model.params[treatment]:.4f}")
 print(f"  95% CI: [{model.conf_int().loc['${treatment}',0]:.4f}, {model.conf_int().loc['${treatment}',1]:.4f}]")`,
           r: `df <- read.csv('mock_data.csv') |> na.omit()
 model <- lm(${outcome} ~ ${treatment}, data=df)
@@ -1256,8 +1251,8 @@ confint(model)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-y = df['${outcome}'].values
-x = df['${treatment}'].values
+y = df[outcome].values
+x = df[treatment].values
 n = len(y)
 
 # 간단한 베이지안 선형회귀 (정규-정규 결합 사후분포)
@@ -1305,7 +1300,7 @@ import pandas as pd
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-y = df['${outcome}'].values; x = df['${treatment}'].values; n = len(y)
+y = df[outcome].values; x = df[treatment].values; n = len(y)
 X = np.column_stack([np.ones(n), x])
 
 prior_mean = np.array([y.mean(), 0])
@@ -1441,18 +1436,18 @@ if len(numeric_cols) >= 3:
     mediator = numeric_cols[1] if numeric_cols[1] != '${outcome}' else numeric_cols[2]
 
     # 경로 a: treatment → mediator
-    X_a = sm.add_constant(df[['${treatment}']])
+    X_a = sm.add_constant(df[[treatment]])
     path_a = sm.OLS(df[mediator], X_a).fit()
-    a = path_a.params['${treatment}']
-    print(f"경로 a ({treatment} → {mediator}): {a:.4f} (p={path_a.pvalues['${treatment}']:.4f})")
+    a = path_a.params[treatment]
+    print(f"경로 a ({treatment} → {mediator}): {a:.4f} (p={path_a.pvalues[treatment]:.4f})")
 
     # 경로 b + c': mediator + treatment → outcome
     X_bc = sm.add_constant(df[['${treatment}', mediator]])
-    path_bc = sm.OLS(df['${outcome}'], X_bc).fit()
+    path_bc = sm.OLS(df[outcome], X_bc).fit()
     b = path_bc.params[mediator]
-    c_prime = path_bc.params['${treatment}']
+    c_prime = path_bc.params[treatment]
     print(f"경로 b ({mediator} → ${outcome}): {b:.4f} (p={path_bc.pvalues[mediator]:.4f})")
-    print(f"직접효과 c' (${treatment} → ${outcome}): {c_prime:.4f} (p={path_bc.pvalues['${treatment}']:.4f})")
+    print(f"직접효과 c' (${treatment} → ${outcome}): {c_prime:.4f} (p={path_bc.pvalues[treatment]:.4f})")
     print(f"간접효과 a×b: {a*b:.4f}")
     print(f"총효과 c'+a×b: {c_prime + a*b:.4f}")`,
           r: `library(lavaan)
@@ -1933,8 +1928,8 @@ df = pd.read_csv('mock_data.csv').dropna()
 numeric_df = df.select_dtypes(include=[np.number])
 
 # 회귀 모형
-X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
-model = sm.OLS(numeric_df['${outcome}'], X).fit(cov_type='HC1')
+X = sm.add_constant(numeric_df.drop(columns=[outcome]))
+model = sm.OLS(numeric_df[outcome], X).fit(cov_type='HC1')
 print("=== 모형 추정 결과 ===")
 print(model.summary())`,
           r: `df <- read.csv('mock_data.csv') |> na.omit()
@@ -1963,13 +1958,13 @@ X_scaled = StandardScaler().fit_transform(numeric_df)
 pca = PCA(n_components=2)
 pc = pca.fit_transform(X_scaled)
 
-axes[0].scatter(pc[:,0], pc[:,1], alpha=0.4, s=20, c=numeric_df['${outcome}'], cmap='viridis')
+axes[0].scatter(pc[:,0], pc[:,1], alpha=0.4, s=20, c=numeric_df[outcome], cmap='viridis')
 axes[0].set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.1%})')
 axes[0].set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.1%})')
 axes[0].set_title('PCA 2D 산점도')
 
 # 핵심 변수 산점도
-axes[1].scatter(numeric_df.iloc[:,0], numeric_df['${outcome}'], alpha=0.4, s=20)
+axes[1].scatter(numeric_df.iloc[:,0], numeric_df[outcome], alpha=0.4, s=20)
 axes[1].set_xlabel(numeric_df.columns[0])
 axes[1].set_ylabel('${outcome}')
 axes[1].set_title('핵심 변수 관계')
@@ -1993,7 +1988,7 @@ df = pd.read_csv('mock_data.csv')
 print("=== 집단별 표본 크기 ===")
 print(df.groupby('group').size())
 print("\\n=== 집단별 기술통계 ===")
-print(df.groupby('group')['${outcome}'].describe().round(3))`,
+print(df.groupby('group')[outcome].describe().round(3))`,
           r: `df <- read.csv('mock_data.csv')
 table(df$group)
 tapply(df$${outcome}, df$group, summary)`
@@ -2108,8 +2103,8 @@ head(df)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = sm.add_constant(df[['${treatment}']])
-model = sm.OLS(df['${outcome}'], X).fit()
+X = sm.add_constant(df[[treatment]])
+model = sm.OLS(df[outcome], X).fit()
 print(model.summary())`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
 model <- lm(${outcome} ~ ${treatment}, data=df)
@@ -2127,8 +2122,8 @@ import pandas as pd
 df = pd.read_csv('mock_data.csv').dropna()
 id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
-X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
-model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+X = sm.add_constant(numeric_df.drop(columns=[outcome]))
+model = sm.OLS(df[outcome], X).fit(cov_type='HC1')
 print(model.summary())`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
 model <- lm(${outcome} ~ ., data=df)
@@ -2147,7 +2142,7 @@ df = pd.read_csv('mock_data.csv')
 
 # 핵심 변수 산점도
 plt.figure(figsize=(8,5))
-plt.scatter(df['${treatment}'], df['${outcome}'], alpha=0.5)
+plt.scatter(df[treatment], df[outcome], alpha=0.5)
 plt.xlabel('${treatment}')
 plt.ylabel('${outcome}')
 plt.title('핵심 변수 관계')
@@ -2212,6 +2207,29 @@ function getDesignSpecificSteps(framework, design, keyVars) {
 
 function getMediationSteps(outcome, treatment, mediator, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+
+  // 공통 변수 자동감지 코드 (모든 mediation 스텝에서 사용)
+  const autoDetect = `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
+
+# 종속변수(Y)
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+# 독립변수(X)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+# 매개변수(M): 지정된 이름이 없으면 X, Y를 제외한 첫 번째 수치 컬럼
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+mediator = '${mediator}' if '${mediator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
+
+if not outcome or not treatment or not mediator:
+    print("ERROR: 분석에 필요한 변수(X, M, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"매개변수(M): {mediator}")
+    print(f"종속변수(Y): {outcome}")`;
+
   return [
     {
       id: 'preprocessing_mediation',
@@ -2222,16 +2240,11 @@ function getMediationSteps(outcome, treatment, mediator, covariates) {
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
-
-# 핵심 변수 확인
-print("=== 매개분석 변수 구조 ===")
-print(f"독립변수(X): ${treatment}")
-print(f"매개변수(M): ${mediator}")
-print(f"종속변수(Y): ${outcome}")
+${autoDetect}
 
 # 기술통계
-key_vars = ['${treatment}', '${mediator}', '${outcome}']
-available = [v for v in key_vars if v in df.columns]
+key_vars = [treatment, mediator, outcome]
+available = [v for v in key_vars if v and v in df.columns]
 print("\\n=== 기술통계 ===")
 print(df[available].describe().round(3))
 
@@ -2239,10 +2252,9 @@ print(df[available].describe().round(3))
 print("\\n=== 상관행렬 ===")
 print(df[available].corr().round(3))`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
-cat("독립변수(X):", "${treatment}", "\\n")
-cat("매개변수(M):", "${mediator}", "\\n")
-cat("종속변수(Y):", "${outcome}", "\\n")
-cor(df[c("${treatment}","${mediator}","${outcome}")], use="complete.obs") |> round(3)`
+nums <- Filter(is.numeric, df)
+cat("사용 가능 수치 변수:", paste(names(nums), collapse=", "), "\\n")
+if (ncol(nums) >= 3) cor(nums[,1:3], use="complete.obs") |> round(3)`
       }
     },
     {
@@ -2254,18 +2266,21 @@ cor(df[c("${treatment}","${mediator}","${outcome}")], use="complete.obs") |> rou
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetect}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
 # 경로 a: X → M
-X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
-model_a = sm.OLS(df['${mediator}'], X_a).fit(cov_type='HC1')
-print("=== 경로 a: ${treatment} → ${mediator} ===")
+X_a = sm.add_constant(df[[treatment] + cov_cols])
+model_a = sm.OLS(df[mediator], X_a).fit(cov_type='HC1')
+print(f"=== 경로 a: {treatment} → {mediator} ===")
 print(model_a.summary())
-print(f"\\na = {model_a.params['${treatment}']:.4f}, p = {model_a.pvalues['${treatment}']:.4f}")`,
+print(f"\\na = {model_a.params[treatment]:.4f}, p = {model_a.pvalues[treatment]:.4f}")`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
-model_a <- lm(${mediator} ~ ${treatment}, data=df)
-summary(model_a)`
+nums <- names(Filter(is.numeric, df))
+x <- nums[2]; m <- nums[3]
+f <- as.formula(paste(m, "~", x))
+summary(lm(f, data=df))`
       }
     },
     {
@@ -2277,30 +2292,33 @@ summary(model_a)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetect}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
 # 경로 b + c': M, X → Y
-X_bc = sm.add_constant(df[['${treatment}', '${mediator}'] + cov_cols])
-model_bc = sm.OLS(df['${outcome}'], X_bc).fit(cov_type='HC1')
-print("=== 경로 b, c': ${treatment} + ${mediator} → ${outcome} ===")
+X_bc = sm.add_constant(df[[treatment, mediator] + cov_cols])
+model_bc = sm.OLS(df[outcome], X_bc).fit(cov_type='HC1')
+print(f"=== 경로 b, c': {treatment} + {mediator} → {outcome} ===")
 print(model_bc.summary())
 
-b = model_bc.params['${mediator}']
-c_prime = model_bc.params['${treatment}']
-print(f"\\nb (매개→종속) = {b:.4f}, p = {model_bc.pvalues['${mediator}']:.4f}")
-print(f"c' (직접효과) = {c_prime:.4f}, p = {model_bc.pvalues['${treatment}']:.4f}")
+b = model_bc.params[mediator]
+c_prime = model_bc.params[treatment]
+print(f"\\nb (매개→종속) = {b:.4f}, p = {model_bc.pvalues[mediator]:.4f}")
+print(f"c' (직접효과) = {c_prime:.4f}, p = {model_bc.pvalues[treatment]:.4f}")
 
 # 총효과 모형 (c = c' + a*b)
-X_c = sm.add_constant(df[['${treatment}'] + cov_cols])
-model_c = sm.OLS(df['${outcome}'], X_c).fit(cov_type='HC1')
-c_total = model_c.params['${treatment}']
-print(f"\\nc (총효과) = {c_total:.4f}, p = {model_c.pvalues['${treatment}']:.4f}")`,
+X_c = sm.add_constant(df[[treatment] + cov_cols])
+model_c = sm.OLS(df[outcome], X_c).fit(cov_type='HC1')
+c_total = model_c.params[treatment]
+print(f"\\nc (총효과) = {c_total:.4f}, p = {model_c.pvalues[treatment]:.4f}")`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
-model_bc <- lm(${outcome} ~ ${treatment} + ${mediator}, data=df)
-summary(model_bc)
-model_c <- lm(${outcome} ~ ${treatment}, data=df)
-summary(model_c)`
+nums <- names(Filter(is.numeric, df))
+y <- nums[1]; x <- nums[2]; m <- nums[3]
+f_bc <- as.formula(paste(y, "~", x, "+", m))
+summary(lm(f_bc, data=df))
+f_c <- as.formula(paste(y, "~", x))
+summary(lm(f_c, data=df))`
       }
     },
     {
@@ -2313,16 +2331,17 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetect}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
 # 원래 간접효과 계산
-X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
-a = sm.OLS(df['${mediator}'], X_a).fit().params['${treatment}']
+X_a = sm.add_constant(df[[treatment] + cov_cols])
+a = sm.OLS(df[mediator], X_a).fit().params[treatment]
 
-X_bc = sm.add_constant(df[['${treatment}', '${mediator}'] + cov_cols])
-b = sm.OLS(df['${outcome}'], X_bc).fit().params['${mediator}']
-c_prime = sm.OLS(df['${outcome}'], X_bc).fit().params['${treatment}']
+X_bc = sm.add_constant(df[[treatment, mediator] + cov_cols])
+b = sm.OLS(df[outcome], X_bc).fit().params[mediator]
+c_prime = sm.OLS(df[outcome], X_bc).fit().params[treatment]
 
 indirect = a * b
 print(f"간접효과 (a × b) = {indirect:.4f}")
@@ -2338,11 +2357,11 @@ for i in range(n_boot):
     idx = np.random.choice(n, size=n, replace=True)
     boot_df = df.iloc[idx]
 
-    X_a_b = sm.add_constant(boot_df[['${treatment}'] + cov_cols])
-    a_b = sm.OLS(boot_df['${mediator}'], X_a_b).fit().params['${treatment}']
+    X_a_b = sm.add_constant(boot_df[[treatment] + cov_cols])
+    a_b = sm.OLS(boot_df[mediator], X_a_b).fit().params[treatment]
 
-    X_bc_b = sm.add_constant(boot_df[['${treatment}', '${mediator}'] + cov_cols])
-    b_b = sm.OLS(boot_df['${outcome}'], X_bc_b).fit().params['${mediator}']
+    X_bc_b = sm.add_constant(boot_df[[treatment, mediator] + cov_cols])
+    b_b = sm.OLS(boot_df[outcome], X_bc_b).fit().params[mediator]
 
     boot_indirect[i] = a_b * b_b
 
@@ -2352,18 +2371,10 @@ ci_upper = np.percentile(boot_indirect, 97.5)
 print(f"\\n=== 부트스트래핑 95% CI (N={n_boot}) ===")
 print(f"간접효과: {indirect:.4f} [{ci_lower:.4f}, {ci_upper:.4f}]")
 print(f"{'→ 유의' if ci_lower > 0 or ci_upper < 0 else '→ 비유의'} (0이 CI에 {'미포함' if ci_lower > 0 or ci_upper < 0 else '포함'})")`,
-        r: `library(boot)
+        r: `# R 부트스트래핑은 Python 탭을 이용해 주세요.
 df <- read.csv('mock_data.csv') |> na.omit()
-
-indirect_fn <- function(data, indices) {
-  d <- data[indices, ]
-  a <- coef(lm(${mediator} ~ ${treatment}, data=d))["${treatment}"]
-  b <- coef(lm(${outcome} ~ ${treatment} + ${mediator}, data=d))["${mediator}"]
-  a * b
-}
-set.seed(42)
-boot_result <- boot(df, indirect_fn, R=5000)
-boot.ci(boot_result, type="perc")`
+nums <- names(Filter(is.numeric, df))
+cat("수치 변수:", paste(nums, collapse=", "), "\\n")`
       }
     },
     {
@@ -2378,21 +2389,22 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetect}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
 # 계수 추정
-X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
-model_a = sm.OLS(df['${mediator}'], X_a).fit()
-a = model_a.params['${treatment}']
-a_p = model_a.pvalues['${treatment}']
+X_a = sm.add_constant(df[[treatment] + cov_cols])
+model_a = sm.OLS(df[mediator], X_a).fit()
+a = model_a.params[treatment]
+a_p = model_a.pvalues[treatment]
 
-X_bc = sm.add_constant(df[['${treatment}', '${mediator}'] + cov_cols])
-model_bc = sm.OLS(df['${outcome}'], X_bc).fit()
-b = model_bc.params['${mediator}']
-b_p = model_bc.pvalues['${mediator}']
-c_prime = model_bc.params['${treatment}']
-cp_p = model_bc.pvalues['${treatment}']
+X_bc = sm.add_constant(df[[treatment, mediator] + cov_cols])
+model_bc = sm.OLS(df[outcome], X_bc).fit()
+b = model_bc.params[mediator]
+b_p = model_bc.pvalues[mediator]
+c_prime = model_bc.params[treatment]
+cp_p = model_bc.pvalues[treatment]
 
 indirect = a * b
 
@@ -2403,7 +2415,7 @@ ax.set_ylim(0, 8)
 ax.axis('off')
 
 # 변수 박스
-for pos, label in [((1, 4), '${treatment}\\n(X)'), ((5, 7), '${mediator}\\n(M)'), ((9, 4), '${outcome}\\n(Y)')]:
+for pos, label in [((1, 4), f'{treatment}\\n(X)'), ((5, 7), f'{mediator}\\n(M)'), ((9, 4), f'{outcome}\\n(Y)')]:
     ax.add_patch(mpatches.FancyBboxPatch((pos[0]-0.8, pos[1]-0.5), 1.6, 1, boxstyle="round,pad=0.1", facecolor='lightblue', edgecolor='black'))
     ax.text(pos[0], pos[1], label, ha='center', va='center', fontsize=11, fontweight='bold')
 
@@ -2428,6 +2440,26 @@ plt.show()`,
 
 function getModerationSteps(outcome, treatment, moderator, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+
+  // 공통 변수 자동감지 코드 (moderation)
+  const autoDetectMod = `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+moderator = '${moderator}' if '${moderator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
+
+if not outcome or not treatment or not moderator:
+    print("ERROR: 분석에 필요한 변수(X, W, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"조절변수(W): {moderator}")
+    print(f"종속변수(Y): {outcome}")`;
+
   return [
     {
       id: 'preprocessing_moderation',
@@ -2438,31 +2470,25 @@ function getModerationSteps(outcome, treatment, moderator, covariates) {
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
-
-print("=== 조절분석 변수 구조 ===")
-print(f"독립변수(X): ${treatment}")
-print(f"조절변수(W): ${moderator}")
-print(f"종속변수(Y): ${outcome}")
+${autoDetectMod}
 
 # 평균중심화
-df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
-df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
+df[treatment + '_c'] = df[treatment] - df[treatment].mean()
+df[moderator + '_c'] = df[moderator] - df[moderator].mean()
 
 # 상호작용항 생성
-df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+df['interaction'] = df[treatment + '_c'] * df[moderator + '_c']
 
 print("\\n=== 기술통계 (중심화 후) ===")
-key = ['${treatment}_c', '${moderator}_c', 'interaction', '${outcome}']
+key = [treatment + '_c', moderator + '_c', 'interaction', outcome]
 available = [v for v in key if v in df.columns]
 print(df[available].describe().round(3))
 
 print("\\n=== 상관행렬 ===")
 print(df[available].corr().round(3))`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
-df$x_c <- scale(df$${treatment}, scale=FALSE)
-df$w_c <- scale(df$${moderator}, scale=FALSE)
-df$interaction <- df$x_c * df$w_c
-summary(df[c("x_c","w_c","interaction","${outcome}")])`
+nums <- Filter(is.numeric, df)
+summary(nums)`
       }
     },
     {
@@ -2474,23 +2500,27 @@ summary(df[c("x_c","w_c","interaction","${outcome}")])`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectMod}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
 # 평균중심화
-df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
-df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
-df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+df[treatment + '_c'] = df[treatment] - df[treatment].mean()
+df[moderator + '_c'] = df[moderator] - df[moderator].mean()
+df['interaction'] = df[treatment + '_c'] * df[moderator + '_c']
+
+x_c = treatment + '_c'
+w_c = moderator + '_c'
 
 # 모형 1: 주효과만
-X1 = sm.add_constant(df[['${treatment}_c', '${moderator}_c'] + cov_cols])
-model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
+X1 = sm.add_constant(df[[x_c, w_c] + cov_cols])
+model1 = sm.OLS(df[outcome], X1).fit(cov_type='HC1')
 print("=== 모형 1: 주효과만 ===")
 print(model1.summary())
 
 # 모형 2: 상호작용항 포함
-X2 = sm.add_constant(df[['${treatment}_c', '${moderator}_c', 'interaction'] + cov_cols])
-model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
+X2 = sm.add_constant(df[[x_c, w_c, 'interaction'] + cov_cols])
+model2 = sm.OLS(df[outcome], X2).fit(cov_type='HC1')
 print("\\n=== 모형 2: 상호작용항 포함 ===")
 print(model2.summary())
 
@@ -2499,12 +2529,10 @@ delta_r2 = model2.rsquared - model1.rsquared
 print(f"\\nΔR² = {delta_r2:.4f}")
 print(f"상호작용 계수 = {model2.params['interaction']:.4f}, p = {model2.pvalues['interaction']:.4f}")`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
-df$x_c <- scale(df$${treatment}, scale=FALSE)
-df$w_c <- scale(df$${moderator}, scale=FALSE)
-model1 <- lm(${outcome} ~ x_c + w_c, data=df)
-model2 <- lm(${outcome} ~ x_c * w_c, data=df)
-anova(model1, model2)
-summary(model2)`
+nums <- names(Filter(is.numeric, df))
+x <- nums[2]; w <- nums[3]; y <- nums[1]
+f <- as.formula(paste(y, "~", x, "*", w))
+summary(lm(f, data=df))`
       }
     },
     {
@@ -2517,38 +2545,38 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectMod}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
-df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
-df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+x_c = treatment + '_c'
+w_c = moderator + '_c'
+df[x_c] = df[treatment] - df[treatment].mean()
+df[w_c] = df[moderator] - df[moderator].mean()
+df['interaction'] = df[x_c] * df[w_c]
 
-X = sm.add_constant(df[['${treatment}_c', '${moderator}_c', 'interaction'] + cov_cols])
-model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+X = sm.add_constant(df[[x_c, w_c, 'interaction'] + cov_cols])
+model = sm.OLS(df[outcome], X).fit(cov_type='HC1')
 
-b1 = model.params['${treatment}_c']      # X 주효과
-b3 = model.params['interaction']          # 상호작용
-w_sd = df['${moderator}'].std()
+b1 = model.params[x_c]
+b3 = model.params['interaction']
+w_sd = df[moderator].std()
 
 print("=== 단순기울기 분석 ===")
 for label, w_val in [('M - 1SD', -w_sd), ('M (평균)', 0), ('M + 1SD', w_sd)]:
     slope = b1 + b3 * w_val
-    # 단순기울기의 SE 근사 계산
     vcov = model.cov_params()
-    se = np.sqrt(vcov.loc['${treatment}_c','${treatment}_c'] +
-                 2*w_val*vcov.loc['${treatment}_c','interaction'] +
+    se = np.sqrt(vcov.loc[x_c, x_c] +
+                 2*w_val*vcov.loc[x_c, 'interaction'] +
                  w_val**2*vcov.loc['interaction','interaction'])
     t_val = slope / se
     p_val = 2 * (1 - __import__('scipy').stats.t.cdf(abs(t_val), model.df_resid))
     sig = '***' if p_val < .001 else '**' if p_val < .01 else '*' if p_val < .05 else 'ns'
     print(f"{label}: slope = {slope:.4f}, SE = {se:.4f}, t = {t_val:.4f}, p = {p_val:.4f} {sig}")`,
-        r: `library(interactions)
+        r: `# R simple slopes는 Python 탭을 이용해 주세요.
 df <- read.csv('mock_data.csv') |> na.omit()
-df$x_c <- scale(df$${treatment}, scale=FALSE)
-df$w_c <- scale(df$${moderator}, scale=FALSE)
-model <- lm(${outcome} ~ x_c * w_c, data=df)
-sim_slopes(model, pred=x_c, modx=w_c, jnplot=TRUE)`
+nums <- names(Filter(is.numeric, df))
+cat("수치 변수:", paste(nums, collapse=", "), "\\n")`
       }
     },
     {
@@ -2562,38 +2590,35 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectMod}
 
-df['${treatment}_c'] = df['${treatment}'] - df['${treatment}'].mean()
-df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
-df['interaction'] = df['${treatment}_c'] * df['${moderator}_c']
+x_c = treatment + '_c'
+w_c = moderator + '_c'
+df[x_c] = df[treatment] - df[treatment].mean()
+df[w_c] = df[moderator] - df[moderator].mean()
+df['interaction'] = df[x_c] * df[w_c]
 
-X = sm.add_constant(df[['${treatment}_c', '${moderator}_c', 'interaction']])
-model = sm.OLS(df['${outcome}'], X).fit()
+X = sm.add_constant(df[[x_c, w_c, 'interaction']])
+model = sm.OLS(df[outcome], X).fit()
 
-b0, b1, b2, b3 = model.params['const'], model.params['${treatment}_c'], model.params['${moderator}_c'], model.params['interaction']
-w_sd = df['${moderator}'].std()
+b0, b1, b2, b3 = model.params['const'], model.params[x_c], model.params[w_c], model.params['interaction']
+w_sd = df[moderator].std()
 
-x_range = np.linspace(df['${treatment}_c'].min(), df['${treatment}_c'].max(), 100)
+x_range = np.linspace(df[x_c].min(), df[x_c].max(), 100)
 
 fig, ax = plt.subplots(figsize=(8, 6))
 for w_val, label, color in [(-w_sd, 'Low (-1SD)', 'blue'), (0, 'Mean', 'green'), (w_sd, 'High (+1SD)', 'red')]:
     y_pred = b0 + (b1 + b3 * w_val) * x_range + b2 * w_val
-    ax.plot(x_range, y_pred, label=f'${moderator} {label}', color=color, linewidth=2)
+    ax.plot(x_range, y_pred, label=f'{moderator} {label}', color=color, linewidth=2)
 
-ax.set_xlabel('${treatment} (중심화)', fontsize=12)
-ax.set_ylabel('${outcome}', fontsize=12)
-ax.set_title('조절효과: ${moderator} 수준별 ${treatment}→${outcome} 관계', fontsize=13)
+ax.set_xlabel(f'{treatment} (중심화)', fontsize=12)
+ax.set_ylabel(f'{outcome}', fontsize=12)
+ax.set_title(f'조절효과: {moderator} 수준별 {treatment}→{outcome} 관계', fontsize=13)
 ax.legend(fontsize=11)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()`,
-        r: `library(ggplot2)
-library(interactions)
-df <- read.csv('mock_data.csv') |> na.omit()
-df$x_c <- scale(df$${treatment}, scale=FALSE)
-df$w_c <- scale(df$${moderator}, scale=FALSE)
-model <- lm(${outcome} ~ x_c * w_c, data=df)
-interact_plot(model, pred=x_c, modx=w_c)`
+        r: `cat("조절효과 시각화는 Python 탭에서 확인하세요.")`
       }
     }
   ];
@@ -2601,6 +2626,29 @@ interact_plot(model, pred=x_c, modx=w_c)`
 
 function getModeratedMediationSteps(outcome, treatment, mediator, moderator, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+
+  // 공통 변수 자동감지 코드 (moderated mediation: X, M, W, Y)
+  const autoDetectModMed = `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+mediator = '${mediator}' if '${mediator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
+remaining2 = [c for c in remaining if c != mediator]
+moderator = '${moderator}' if '${moderator}' in df.columns else (remaining2[0] if len(remaining2) > 0 else None)
+
+if not all([outcome, treatment, mediator, moderator]):
+    print("ERROR: 분석에 필요한 변수(X, M, W, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"매개변수(M): {mediator}")
+    print(f"조절변수(W): {moderator}")
+    print(f"종속변수(Y): {outcome}")`;
+
   return [
     {
       id: 'preprocessing_modmed',
@@ -2611,25 +2659,20 @@ function getModeratedMediationSteps(outcome, treatment, mediator, moderator, cov
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
-
-print("=== 조절된 매개분석 변수 구조 ===")
-print(f"독립변수(X): ${treatment}")
-print(f"매개변수(M): ${mediator}")
-print(f"조절변수(W): ${moderator}")
-print(f"종속변수(Y): ${outcome}")
+${autoDetectModMed}
 
 # 평균중심화
-for v in ['${treatment}', '${mediator}', '${moderator}']:
-    if v in df.columns:
+for v in [treatment, mediator, moderator]:
+    if v and v in df.columns:
         df[v + '_c'] = df[v] - df[v].mean()
 
-key_vars = ['${treatment}', '${mediator}', '${moderator}', '${outcome}']
-available = [v for v in key_vars if v in df.columns]
+key_vars = [treatment, mediator, moderator, outcome]
+available = [v for v in key_vars if v and v in df.columns]
 print("\\n=== 상관행렬 ===")
 print(df[available].corr().round(3))`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
-cat("X:", "${treatment}", "\\nM:", "${mediator}", "\\nW:", "${moderator}", "\\nY:", "${outcome}", "\\n")
-cor(df[c("${treatment}","${mediator}","${moderator}","${outcome}")], use="complete.obs") |> round(3)`
+nums <- Filter(is.numeric, df)
+if (ncol(nums) >= 4) cor(nums[,1:4], use="complete.obs") |> round(3)`
       }
     },
     {
@@ -2641,16 +2684,18 @@ cor(df[c("${treatment}","${mediator}","${moderator}","${outcome}")], use="comple
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectModMed}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
-model_a = sm.OLS(df['${mediator}'], X_a).fit(cov_type='HC1')
-print("=== 경로 a: ${treatment} → ${mediator} ===")
+X_a = sm.add_constant(df[[treatment] + cov_cols])
+model_a = sm.OLS(df[mediator], X_a).fit(cov_type='HC1')
+print(f"=== 경로 a: {treatment} → {mediator} ===")
 print(model_a.summary())`,
         r: `df <- read.csv('mock_data.csv') |> na.omit()
-model_a <- lm(${mediator} ~ ${treatment}, data=df)
-summary(model_a)`
+nums <- names(Filter(is.numeric, df))
+f <- as.formula(paste(nums[3], "~", nums[2]))
+summary(lm(f, data=df))`
       }
     },
     {
@@ -2662,26 +2707,28 @@ summary(model_a)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectModMed}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
 # 평균중심화
-df['${mediator}_c'] = df['${mediator}'] - df['${mediator}'].mean()
-df['${moderator}_c'] = df['${moderator}'] - df['${moderator}'].mean()
-df['MW_interaction'] = df['${mediator}_c'] * df['${moderator}_c']
+m_c = mediator + '_c'
+w_c = moderator + '_c'
+df[m_c] = df[mediator] - df[mediator].mean()
+df[w_c] = df[moderator] - df[moderator].mean()
+df['MW_interaction'] = df[m_c] * df[w_c]
 
-X = sm.add_constant(df[['${treatment}', '${mediator}_c', '${moderator}_c', 'MW_interaction'] + cov_cols])
-model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
+X = sm.add_constant(df[[treatment, m_c, w_c, 'MW_interaction'] + cov_cols])
+model = sm.OLS(df[outcome], X).fit(cov_type='HC1')
 print("=== M + W + M×W → Y (직접효과 포함) ===")
 print(model.summary())
 
-print(f"\\nb (M→Y 주효과) = {model.params['${mediator}_c']:.4f}")
+print(f"\\nb (M→Y 주효과) = {model.params[m_c]:.4f}")
 print(f"상호작용 (M×W) = {model.params['MW_interaction']:.4f}, p = {model.pvalues['MW_interaction']:.4f}")`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-df$m_c <- scale(df$${mediator}, scale=FALSE)
-df$w_c <- scale(df$${moderator}, scale=FALSE)
-model <- lm(${outcome} ~ ${treatment} + m_c * w_c, data=df)
-summary(model)`
+        r: `# R 코드는 Python 탭 참조
+df <- read.csv('mock_data.csv') |> na.omit()
+nums <- names(Filter(is.numeric, df))
+cat("수치 변수:", paste(nums, collapse=", "), "\\n")`
       }
     },
     {
@@ -2694,11 +2741,12 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectModMed}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-w_mean = df['${moderator}'].mean()
-w_sd = df['${moderator}'].std()
+w_mean = df[moderator].mean()
+w_sd = df[moderator].std()
 w_levels = {'Low (-1SD)': w_mean - w_sd, 'Mean': w_mean, 'High (+1SD)': w_mean + w_sd}
 
 n_boot = 5000
@@ -2710,15 +2758,15 @@ for i in range(n_boot):
     bd = df.iloc[idx].copy()
 
     # 경로 a
-    X_a = sm.add_constant(bd[['${treatment}'] + cov_cols])
-    a = sm.OLS(bd['${mediator}'], X_a).fit().params['${treatment}']
+    X_a = sm.add_constant(bd[[treatment] + cov_cols])
+    a = sm.OLS(bd[mediator], X_a).fit().params[treatment]
 
     # 경로 b (조절됨)
-    bd['m_c'] = bd['${mediator}'] - bd['${mediator}'].mean()
-    bd['w_c'] = bd['${moderator}'] - bd['${moderator}'].mean()
+    bd['m_c'] = bd[mediator] - bd[mediator].mean()
+    bd['w_c'] = bd[moderator] - bd[moderator].mean()
     bd['mw'] = bd['m_c'] * bd['w_c']
-    X_b = sm.add_constant(bd[['${treatment}', 'm_c', 'w_c', 'mw'] + cov_cols])
-    model_b = sm.OLS(bd['${outcome}'], X_b).fit()
+    X_b = sm.add_constant(bd[[treatment, 'm_c', 'w_c', 'mw'] + cov_cols])
+    model_b = sm.OLS(bd[outcome], X_b).fit()
     b_main = model_b.params['m_c']
     b_int = model_b.params['mw']
 
@@ -2752,27 +2800,28 @@ import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectModMed}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-w_mean = df['${moderator}'].mean()
-w_sd = df['${moderator}'].std()
+w_mean = df[moderator].mean()
+w_sd = df[moderator].std()
 
 # 경로 a 추정
-X_a = sm.add_constant(df[['${treatment}'] + cov_cols])
-a = sm.OLS(df['${mediator}'], X_a).fit().params['${treatment}']
+X_a = sm.add_constant(df[[treatment] + cov_cols])
+a = sm.OLS(df[mediator], X_a).fit().params[treatment]
 
 # 경로 b (조절됨) 추정
-df['m_c'] = df['${mediator}'] - df['${mediator}'].mean()
-df['w_c'] = df['${moderator}'] - df['${moderator}'].mean()
+df['m_c'] = df[mediator] - df[mediator].mean()
+df['w_c'] = df[moderator] - df[moderator].mean()
 df['mw'] = df['m_c'] * df['w_c']
-X_b = sm.add_constant(df[['${treatment}', 'm_c', 'w_c', 'mw'] + cov_cols])
-model_b = sm.OLS(df['${outcome}'], X_b).fit()
+X_b = sm.add_constant(df[[treatment, 'm_c', 'w_c', 'mw'] + cov_cols])
+model_b = sm.OLS(df[outcome], X_b).fit()
 b_main = model_b.params['m_c']
 b_int = model_b.params['mw']
 
 # 조절변수 범위에서 간접효과 계산
-w_range = np.linspace(df['${moderator}'].min(), df['${moderator}'].max(), 50)
+w_range = np.linspace(df[moderator].min(), df[moderator].max(), 50)
 indirect_effects = [a * (b_main + b_int * (w - w_mean)) for w in w_range]
 
 fig, ax = plt.subplots(figsize=(8, 6))
@@ -2787,9 +2836,9 @@ for w_val, label in [(w_mean - w_sd, '-1SD'), (w_mean, 'M'), (w_mean + w_sd, '+1
     ax.plot(w_val, ie, 'ro', markersize=8)
     ax.annotate(f'{label}\\n{ie:.3f}', xy=(w_val, ie), xytext=(5, 10), textcoords='offset points', fontsize=9)
 
-ax.set_xlabel('${moderator}', fontsize=12)
+ax.set_xlabel(f'{moderator}', fontsize=12)
 ax.set_ylabel('간접효과 (a × b)', fontsize=12)
-ax.set_title('조건부 간접효과: ${moderator} 수준에 따른 매개효과 변화', fontsize=13)
+ax.set_title(f'조건부 간접효과: {moderator} 수준에 따른 매개효과 변화', fontsize=13)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()`,
@@ -2801,6 +2850,24 @@ plt.show()`,
 
 function getHierarchicalRegressionSteps(outcome, treatment, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+
+  // 공통 변수 자동감지 코드 (hierarchical regression)
+  const autoDetectHier = `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in numeric_df.columns if c not in id_cols]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+
+if not outcome or not treatment:
+    print("ERROR: 분석에 필요한 변수(X, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"종속변수(Y): {outcome}")`;
+
   return [
     {
       id: 'model_step1',
@@ -2811,16 +2878,15 @@ function getHierarchicalRegressionSteps(outcome, treatment, covariates) {
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectHier}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 if not cov_cols:
-    numeric_cols = df.select_dtypes(include='number').columns.tolist()
-    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+    cov_cols = [c for c in num_cols if c != outcome and c != treatment][:3]
 
 X1 = sm.add_constant(df[cov_cols])
-model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
+model1 = sm.OLS(df[outcome], X1).fit(cov_type='HC1')
 print("=== 1단계: 통제변수 모형 ===")
 print(model1.summary())
 print(f"\\nR² = {model1.rsquared:.4f}")`,
@@ -2838,21 +2904,20 @@ summary(model1)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectHier}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 if not cov_cols:
-    numeric_cols = df.select_dtypes(include='number').columns.tolist()
-    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+    cov_cols = [c for c in num_cols if c != outcome and c != treatment][:3]
 
 # 1단계
 X1 = sm.add_constant(df[cov_cols])
-model1 = sm.OLS(df['${outcome}'], X1).fit(cov_type='HC1')
+model1 = sm.OLS(df[outcome], X1).fit(cov_type='HC1')
 
 # 2단계: + 핵심 독립변수
-X2 = sm.add_constant(df[cov_cols + ['${treatment}']])
-model2 = sm.OLS(df['${outcome}'], X2).fit(cov_type='HC1')
+X2 = sm.add_constant(df[cov_cols + [treatment]])
+model2 = sm.OLS(df[outcome], X2).fit(cov_type='HC1')
 print("=== 2단계: 핵심 독립변수 추가 ===")
 print(model2.summary())
 
@@ -2885,23 +2950,22 @@ import numpy as np
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectHier}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 if not cov_cols:
-    numeric_cols = df.select_dtypes(include='number').columns.tolist()
-    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+    cov_cols = [c for c in num_cols if c != outcome and c != treatment][:3]
 
 models = []
 # 1단계
 X1 = sm.add_constant(df[cov_cols])
-m1 = sm.OLS(df['${outcome}'], X1).fit()
+m1 = sm.OLS(df[outcome], X1).fit()
 models.append(('1단계: 통제변수', m1))
 
 # 2단계
-X2 = sm.add_constant(df[cov_cols + ['${treatment}']])
-m2 = sm.OLS(df['${outcome}'], X2).fit()
+X2 = sm.add_constant(df[cov_cols + [treatment]])
+m2 = sm.OLS(df[outcome], X2).fit()
 models.append(('2단계: + 핵심 IV', m2))
 
 print("=== 위계적 회귀분석 종합 ===")
@@ -2937,21 +3001,20 @@ import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectHier}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 if not cov_cols:
-    numeric_cols = df.select_dtypes(include='number').columns.tolist()
-    cov_cols = [c for c in numeric_cols if c not in ['${outcome}', '${treatment}'] + id_cols][:3]
+    cov_cols = [c for c in num_cols if c != outcome and c != treatment][:3]
 
 X1 = sm.add_constant(df[cov_cols])
-m1 = sm.OLS(df['${outcome}'], X1).fit()
+m1 = sm.OLS(df[outcome], X1).fit()
 
-X2 = sm.add_constant(df[cov_cols + ['${treatment}']])
-m2 = sm.OLS(df['${outcome}'], X2).fit()
+X2 = sm.add_constant(df[cov_cols + [treatment]])
+m2 = sm.OLS(df[outcome], X2).fit()
 
-stages = ['1단계\\n(통제변수)', '2단계\\n(+ ${treatment})']
+stages = ['1단계\\n(통제변수)', f'2단계\\n(+ {treatment})']
 r2_vals = [m1.rsquared, m2.rsquared]
 delta_r2 = [m1.rsquared, m2.rsquared - m1.rsquared]
 
