@@ -639,7 +639,7 @@ model_fe = sm.OLS(df_dummies[outcome], X).fit(cov_type='HC1')
 print("=== 지역 고정효과 모형 ===")
 print(f"R²: {model_fe.rsquared:.4f}")
 print(f"Adj R²: {model_fe.rsquared_adj:.4f}")
-print(f"${treatment} 계수: {model_fe.params[treatment]:.4f} (p={model_fe.pvalues[treatment]:.4f})")`,
+print(f"{treatment} 계수: {model_fe.params[treatment]:.4f} (p={model_fe.pvalues[treatment]:.4f})")`,
           r: `library(lmtest)
 df <- read.csv('mock_data.csv') |> na.omit()
 
@@ -667,8 +667,8 @@ region_means = df.groupby(region_col)[outcome].mean().sort_values()
 axes[0].barh(range(min(len(region_means),20)), region_means.values[:20])
 axes[0].set_yticks(range(min(len(region_means),20)))
 axes[0].set_yticklabels(region_means.index[:20], fontsize=8)
-axes[0].set_xlabel('평균 ${outcome}')
-axes[0].set_title('지역별 ${outcome} 평균')
+axes[0].set_xlabel(f'평균 {outcome}')
+axes[0].set_title(f'지역별 {outcome} 평균')
 
 # 핵심 변수 산점도
 axes[1].scatter(df[treatment], df[outcome], alpha=0.4, s=20)
@@ -676,8 +676,8 @@ z = np.polyfit(df[treatment].dropna(), df[outcome].dropna(), 1)
 p = np.poly1d(z)
 x_line = np.linspace(df[treatment].min(), df[treatment].max(), 100)
 axes[1].plot(x_line, p(x_line), 'r--', alpha=0.8)
-axes[1].set_xlabel('${treatment}')
-axes[1].set_ylabel('${outcome}')
+axes[1].set_xlabel(f'{treatment}')
+axes[1].set_ylabel(f'{outcome}')
 axes[1].set_title('핵심 변수 관계')
 
 plt.tight_layout()
@@ -711,7 +711,7 @@ print(f"열: {list(df.columns)}")
 
 # 종속변수 시계열 특성
 y = df[outcome]
-print(f"\\n=== ${outcome} 시계열 특성 ===")
+print(f"\\n=== {outcome} 시계열 특성 ===")
 print(f"평균: {y.mean():.3f}")
 print(f"표준편차: {y.std():.3f}")
 print(f"자기상관(lag 1): {y.autocorr(lag=1):.3f}")
@@ -1034,12 +1034,12 @@ df = pd.read_csv('mock_data.csv').dropna()
 
 # 처리 변수 분포
 print("=== 처리 변수 분포 ===")
-treat_col = '${treatment}'
+treat_col = treatment
 print(df[treat_col].value_counts())
 print(f"처리율: {df[treat_col].mean():.2%}")
 
 # 공변량 균형 확인
-covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ['${outcome}', treat_col]]
+covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome, treat_col]]
 print("\\n=== 공변량 균형 (표준화 평균차) ===")
 for c in covariates[:8]:
     t_mean = df[df[treat_col]==1][c].mean()
@@ -1064,8 +1064,8 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 
 df = pd.read_csv('mock_data.csv').dropna()
-treat_col = '${treatment}'
-outcome_col = '${outcome}'
+treat_col = treatment
+outcome_col = outcome
 
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome_col, treat_col]]
 X = df[covariates]
@@ -1101,8 +1101,8 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
 df = pd.read_csv('mock_data.csv').dropna()
-treat_col = '${treatment}'
-outcome_col = '${outcome}'
+treat_col = treatment
+outcome_col = outcome
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome_col, treat_col]]
 
 # T-Learner (간단한 이질적 효과 추정)
@@ -1147,7 +1147,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestRegressor
 
 df = pd.read_csv('mock_data.csv').dropna()
-treat_col = '${treatment}'; outcome_col = '${outcome}'
+treat_col = treatment; outcome_col = outcome
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome_col, treat_col]]
 
 # 성향점수
@@ -1202,7 +1202,7 @@ print(df.describe().round(3))
 
 # 종속변수 분포 특성 (사전분포 설정 참고)
 y = df[outcome]
-print(f"\\n=== ${outcome} 분포 특성 ===")
+print(f"\\n=== {outcome} 분포 특성 ===")
 print(f"평균: {y.mean():.3f}")
 print(f"표준편차: {y.std():.3f}")
 print(f"왜도: {y.skew():.3f}")
@@ -1234,8 +1234,8 @@ model = sm.OLS(df[outcome], X).fit()
 print("=== MLE 기준 모형 (비교용) ===")
 print(model.summary())
 print(f"\\n비교 포인트:")
-print(f"  ${treatment} 계수: {model.params[treatment]:.4f}")
-print(f"  95% CI: [{model.conf_int().loc['${treatment}',0]:.4f}, {model.conf_int().loc['${treatment}',1]:.4f}]")`,
+print(f"  {treatment} 계수: {model.params[treatment]:.4f}")
+print(f"  95% CI: [{model.conf_int().loc[treatment,0]:.4f}, {model.conf_int().loc[treatment,1]:.4f}]")`,
           r: `df <- read.csv('mock_data.csv') |> na.omit()
 model <- lm(${outcome} ~ ${treatment}, data=df)
 summary(model)
@@ -1270,18 +1270,18 @@ post_mean = post_var @ (np.linalg.inv(prior_var) @ prior_mean + X.T @ y / sigma2
 
 print("=== 베이지안 사후분포 (해석적 해) ===")
 print(f"절편: {post_mean[0]:.4f} ± {np.sqrt(post_var[0,0]):.4f}")
-print(f"${treatment}: {post_mean[1]:.4f} ± {np.sqrt(post_var[1,1]):.4f}")
+print(f"{treatment}: {post_mean[1]:.4f} ± {np.sqrt(post_var[1,1]):.4f}")
 
 # 95% 신용구간
 from scipy import stats
-for i, name in enumerate(['절편', '${treatment}']):
+for i, name in enumerate(['절편', treatment]):
     lo = post_mean[i] - 1.96*np.sqrt(post_var[i,i])
     hi = post_mean[i] + 1.96*np.sqrt(post_var[i,i])
     print(f"  {name} 95% CI: [{lo:.4f}, {hi:.4f}]")
 
 # P(b > 0) 계산
 prob_positive = 1 - stats.norm.cdf(0, post_mean[1], np.sqrt(post_var[1,1]))
-print(f"\\nP(${treatment} > 0) = {prob_positive:.4f}")`,
+print(f"\\nP({treatment} > 0) = {prob_positive:.4f}")`,
           r: `library(BayesFactor)
 df <- read.csv('mock_data.csv') |> na.omit()
 bf <- regressionBF(${outcome} ~ ${treatment}, data=df)
@@ -1311,7 +1311,7 @@ post_mean = post_var @ (np.linalg.inv(prior_var) @ prior_mean + X.T @ y / sigma2
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-# 사전분포 vs 사후분포 (${treatment} 계수)
+# 사전분포 vs 사후분포
 x_range = np.linspace(post_mean[1]-4*np.sqrt(post_var[1,1]), post_mean[1]+4*np.sqrt(post_var[1,1]), 200)
 prior_pdf = stats.norm.pdf(x_range, 0, 10)
 post_pdf = stats.norm.pdf(x_range, post_mean[1], np.sqrt(post_var[1,1]))
@@ -1320,7 +1320,7 @@ axes[0].plot(x_range, prior_pdf, 'b--', label='사전분포', linewidth=2)
 axes[0].plot(x_range, post_pdf, 'r-', label='사후분포', linewidth=2)
 axes[0].axvline(0, color='gray', linestyle=':', alpha=0.5)
 axes[0].fill_between(x_range, post_pdf, alpha=0.2, color='red')
-axes[0].set_xlabel('${treatment} 계수')
+axes[0].set_xlabel(f'{treatment} 계수')
 axes[0].set_title('사전분포 vs 사후분포')
 axes[0].legend()
 
@@ -1428,28 +1428,39 @@ import statsmodels.api as sm
 
 df = pd.read_csv('mock_data.csv').dropna()
 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+_skip = ['id', 'ID', 'entity_id', 'Unnamed: 0', 'year', 'time']
+numeric_cols = [c for c in numeric_cols if c not in _skip]
 
 # 경로 모형 근사 (다중 회귀 체인)
-# Path 1: mediator ~ treatment
 print("=== 경로 분석 (다중 회귀 근사) ===")
 if len(numeric_cols) >= 3:
-    mediator = numeric_cols[1] if numeric_cols[1] != '${outcome}' else numeric_cols[2]
+    # 변수 자동 배정: Y(종속), X(독립), M(매개) — 모두 다른 변수
+    y_var = outcome if outcome and outcome in df.columns else numeric_cols[0]
+    x_var = treatment if treatment and treatment in df.columns and treatment != y_var else numeric_cols[1]
+    remaining_m = [c for c in numeric_cols if c != y_var and c != x_var]
+    m_var = remaining_m[0] if remaining_m else numeric_cols[2]
 
-    # 경로 a: treatment → mediator
-    X_a = sm.add_constant(df[[treatment]])
-    path_a = sm.OLS(df[mediator], X_a).fit()
-    a = path_a.params[treatment]
-    print(f"경로 a ({treatment} → {mediator}): {a:.4f} (p={path_a.pvalues[treatment]:.4f})")
+    print(f"X(독립): {x_var}")
+    print(f"M(매개): {m_var}")
+    print(f"Y(종속): {y_var}")
 
-    # 경로 b + c': mediator + treatment → outcome
-    X_bc = sm.add_constant(df[['${treatment}', mediator]])
-    path_bc = sm.OLS(df[outcome], X_bc).fit()
-    b = path_bc.params[mediator]
-    c_prime = path_bc.params[treatment]
-    print(f"경로 b ({mediator} → ${outcome}): {b:.4f} (p={path_bc.pvalues[mediator]:.4f})")
-    print(f"직접효과 c' (${treatment} → ${outcome}): {c_prime:.4f} (p={path_bc.pvalues[treatment]:.4f})")
+    # 경로 a: X → M
+    X_a = sm.add_constant(df[[x_var]])
+    path_a = sm.OLS(df[m_var], X_a).fit()
+    a = path_a.params[x_var]
+    print(f"\\n경로 a ({x_var} → {m_var}): {a:.4f} (p={path_a.pvalues[x_var]:.4f})")
+
+    # 경로 b + c': M + X → Y
+    X_bc = sm.add_constant(df[[x_var, m_var]])
+    path_bc = sm.OLS(df[y_var], X_bc).fit()
+    b = path_bc.params[m_var]
+    c_prime = path_bc.params[x_var]
+    print(f"경로 b ({m_var} → {y_var}): {b:.4f} (p={path_bc.pvalues[m_var]:.4f})")
+    print(f"직접효과 c' ({x_var} → {y_var}): {c_prime:.4f} (p={path_bc.pvalues[x_var]:.4f})")
     print(f"간접효과 a×b: {a*b:.4f}")
-    print(f"총효과 c'+a×b: {c_prime + a*b:.4f}")`,
+    print(f"총효과 c'+a×b: {c_prime + a*b:.4f}")
+else:
+    print("경로 분석에 최소 3개 수치 변수가 필요합니다.")`,
           r: `library(lavaan)
 df <- read.csv('mock_data.csv') |> na.omit()
 sem_model <- '
@@ -1520,8 +1531,8 @@ df = pd.read_csv('mock_data.csv').dropna()
 
 # 생존 데이터 기본 정보
 # 가정: outcome = 생존시간, treatment = 사건(event) 여부
-time_col = '${outcome}'
-event_col = '${treatment}'
+time_col = outcome
+event_col = treatment
 
 print("=== 생존 데이터 요약 ===")
 print(f"총 관측치: {len(df)}")
@@ -1546,8 +1557,8 @@ summary(surv_obj)`
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
-time_col = '${outcome}'
-event_col = '${treatment}'
+time_col = outcome
+event_col = treatment
 
 # Kaplan-Meier 추정 (수작업)
 times = sorted(df[time_col].unique())
@@ -1592,8 +1603,8 @@ import numpy as np
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-time_col = '${outcome}'
-event_col = '${treatment}'
+time_col = outcome
+event_col = treatment
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [time_col, event_col]]
 
 # Cox 모형 근사 (로지스틱 회귀로 사건 확률 추정)
@@ -1630,7 +1641,7 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
-time_col = '${outcome}'; event_col = '${treatment}'
+time_col = outcome; event_col = treatment
 
 # KM 곡선
 times = sorted(df[time_col].unique())
@@ -1677,7 +1688,7 @@ df = pd.read_csv('mock_data.csv').dropna()
 
 # 메타분석 데이터 가정: 각 행 = 개별 연구
 # outcome = 효과크기(ES), treatment = 표준오차(SE)
-es_col = '${outcome}'; se_col = '${treatment}'
+es_col = outcome; se_col = treatment
 
 print("=== 메타분석 데이터 요약 ===")
 print(f"포함된 연구 수: {len(df)}")
@@ -1708,7 +1719,7 @@ import numpy as np
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-es_col = '${outcome}'; se_col = '${treatment}'
+es_col = outcome; se_col = treatment
 
 es = df[es_col].values
 se = df[se_col].values
@@ -1741,7 +1752,7 @@ import numpy as np
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-es_col = '${outcome}'; se_col = '${treatment}'
+es_col = outcome; se_col = treatment
 
 es = df[es_col].values; se = df[se_col].values
 w = 1 / (se ** 2); k = len(es)
@@ -1797,7 +1808,7 @@ import numpy as np
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-es_col = '${outcome}'; se_col = '${treatment}'
+es_col = outcome; se_col = treatment
 es = df[es_col].values; se = df[se_col].values
 k = len(es)
 
@@ -1966,7 +1977,7 @@ axes[0].set_title('PCA 2D 산점도')
 # 핵심 변수 산점도
 axes[1].scatter(numeric_df.iloc[:,0], numeric_df[outcome], alpha=0.4, s=20)
 axes[1].set_xlabel(numeric_df.columns[0])
-axes[1].set_ylabel('${outcome}')
+axes[1].set_ylabel(f'{outcome}')
 axes[1].set_title('핵심 변수 관계')
 
 plt.tight_layout()
@@ -1985,10 +1996,16 @@ pairs(df[sapply(df, is.numeric)][,1:min(5, ncol(df))])`
         codeTemplate: {
           python: `import pandas as pd
 df = pd.read_csv('mock_data.csv')
+${autoDetectBase}
+
+# 집단 변수 자동감지
+cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+group_col = cat_cols[0] if cat_cols else 'group'
+
 print("=== 집단별 표본 크기 ===")
-print(df.groupby('group').size())
+print(df.groupby(group_col).size())
 print("\\n=== 집단별 기술통계 ===")
-print(df.groupby('group')[outcome].describe().round(3))`,
+print(df.groupby(group_col)[outcome].describe().round(3))`,
           r: `df <- read.csv('mock_data.csv')
 table(df$group)
 tapply(df$${outcome}, df$group, summary)`
@@ -2004,14 +2021,18 @@ from scipy import stats
 import pingouin as pg
 
 df = pd.read_csv('mock_data.csv')
+${autoDetectBase}
+
+cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+group_col = cat_cols[0] if cat_cols else 'group'
 
 # 일원 ANOVA
-anova_result = pg.anova(data=df, dv='${outcome}', between='group')
+anova_result = pg.anova(data=df, dv=outcome, between=group_col)
 print("=== ANOVA ===")
 print(anova_result)
 
 # 사후 검정 (Tukey HSD)
-posthoc = pg.pairwise_tukey(data=df, dv='${outcome}', between='group')
+posthoc = pg.pairwise_tukey(data=df, dv=outcome, between=group_col)
 print("\\n=== 사후 검정 (Tukey HSD) ===")
 print(posthoc)`,
           r: `df <- read.csv('mock_data.csv')
@@ -2029,9 +2050,13 @@ TukeyHSD(model)`
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv')
+${autoDetectBase}
+
+cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+group_col = cat_cols[0] if cat_cols else 'group'
 
 # η² (이타-제곱)
-anova = pg.anova(data=df, dv='${outcome}', between='group', effsize='np2')
+anova = pg.anova(data=df, dv=outcome, between=group_col, effsize='np2')
 print("=== 효과 크기 (partial η²) ===")
 print(anova[['Source','np2']])`,
           r: `library(effectsize)
@@ -2049,16 +2074,20 @@ import seaborn as sns
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv')
+${autoDetectBase}
+
+cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+group_col = cat_cols[0] if cat_cols else 'group'
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
 # 박스플롯
-sns.boxplot(data=df, x='group', y='${outcome}', ax=axes[0])
-axes[0].set_title('집단별 ${outcome} 분포')
+sns.boxplot(data=df, x=group_col, y=outcome, ax=axes[0])
+axes[0].set_title(f'집단별 {outcome} 분포')
 
 # 바이올린 플롯
-sns.violinplot(data=df, x='group', y='${outcome}', ax=axes[1])
-axes[1].set_title('집단별 ${outcome} 분포 (바이올린)')
+sns.violinplot(data=df, x=group_col, y=outcome, ax=axes[1])
+axes[1].set_title(f'집단별 {outcome} 분포 (바이올린)')
 
 plt.tight_layout()
 plt.show()`,
@@ -2143,8 +2172,8 @@ df = pd.read_csv('mock_data.csv')
 # 핵심 변수 산점도
 plt.figure(figsize=(8,5))
 plt.scatter(df[treatment], df[outcome], alpha=0.5)
-plt.xlabel('${treatment}')
-plt.ylabel('${outcome}')
+plt.xlabel(f'{treatment}')
+plt.ylabel(f'{outcome}')
 plt.title('핵심 변수 관계')
 plt.show()`,
         r: `library(ggplot2)
