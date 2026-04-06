@@ -44,7 +44,7 @@ const state = {
   methods: [],             // Agent 1의 detected_methods (최대 2개)
   dataStructure: null,     // Agent 4+의 결과 (데이터 구조 + 변수 테이블)
   statResults: {},         // Agent 2 결과 캐시: { methodIndex: statResult }
-  steps: {},               // Step 목록 캐시: { methodIndex: stepsArray }
+  steps: {},               // Step 목록 캐시: { methodIndex: menuObject (3-group) }
   simulationResults: {},   // 시뮬레이션 결과 캐시: { 'methodIdx-stepId': result }
   reviewResult: null,      // Agent 6+ 결과 (레거시, 단일 캐시)
   reviewResults: {},       // Agent 6+ 결과 캐시: { methodIndex: result }
@@ -316,7 +316,7 @@ export async function runInitialPipeline(apiKey, selectedSections) {
 /**
  * 방법론 통계 해석 + Step 목록 생성 (탭 2 진입 시)
  * @param {number} methodIndex — 방법론 인덱스 (0 or 1)
- * @returns {Promise<{ statResult: Object, steps: Array }>}
+ * @returns {Promise<{ statResult: Object, steps: Object }>} — steps는 3-group menu 객체
  */
 export async function loadAnalysisSteps(methodIndex = 0) {
   state.selectedMethod = methodIndex;

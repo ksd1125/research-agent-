@@ -1,34 +1,129 @@
 /**
- * steps.js — 카테고리별 분석 Step 정의
+ * steps.js — 카테고리별 분석 Step 정의 (3-Group Structure)
  * ResearchMethodAgent v5.0
  *
- * 각 분석 카테고리(12개)에 대해 단계별 실습 Step을 정의합니다.
- * Step은 동적으로 생성되며, 사용자가 [실행] 버튼을 클릭하면
- * simulator.js를 통해 Gemini가 결과를 시뮬레이션합니다.
+ * 각 분석 카테고리에 대해 3개 그룹(descriptive/inferential/visualization)으로
+ * 구조화된 분석 항목을 반환합니다.
+ *
+ * 반환 형식:
+ * {
+ *   descriptive:   { label: '기술통계',  items: [...] },
+ *   inferential:   { label: '추론통계',  items: [...] },
+ *   visualization: { label: '시각화',    items: [...] }
+ * }
  */
 
-/**
- * 분석 카테고리별 Step 목록 반환
- * @param {string} category - 12개 카테고리 중 하나
- * @param {Object} methodMeta - Agent 1의 detected_method (analysis_type, key_variables 등)
- * @param {Object} paperContext - Agent 1의 paper_context
- * @returns {Array<{ id: string, title: string, description: string, codeTemplate: { python: string, r: string } }>}
- */
-export function getStepsForCategory(category, methodMeta, paperContext) {
-  const keyVars = methodMeta?.key_variables || {};
-  const outcome = keyVars.outcome || 'y';
-  const treatment = keyVars.treatment || 'x';
-  const controls = keyVars.controls || 'controls';
-  const analysisType = methodMeta?.analysis_type || '';
+// ─── Auto-detect templates ───────────────────────────────────────
 
-  // Base steps that apply to all categories
-  const baseSteps = [
+function getAutoDetectBase(outcome, treatment) {
+  return `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+_skip = ['id', 'ID', 'entity_id', 'Unnamed: 0', 'year', 'time']
+num_cols = [c for c in numeric_df.columns if c not in _skip]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+
+if outcome: print(f"종속변수(Y): {outcome}")
+if treatment: print(f"독립변수(X): {treatment}")`;
+}
+
+function getAutoDetectMediation(outcome, treatment, mediator) {
+  return `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
+
+# 종속변수(Y)
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+# 독립변수(X)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+# 매개변수(M): 지정된 이름이 없으면 X, Y를 제외한 첫 번째 수치 컬럼
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+mediator = '${mediator}' if '${mediator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
+
+if not outcome or not treatment or not mediator:
+    print("ERROR: 분석에 필요한 변수(X, M, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"매개변수(M): {mediator}")
+    print(f"종속변수(Y): {outcome}")`;
+}
+
+function getAutoDetectModeration(outcome, treatment, moderator) {
+  return `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+moderator = '${moderator}' if '${moderator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
+
+if not outcome or not treatment or not moderator:
+    print("ERROR: 분석에 필요한 변수(X, W, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"조절변수(W): {moderator}")
+    print(f"종속변수(Y): {outcome}")`;
+}
+
+function getAutoDetectModMed(outcome, treatment, mediator, moderator) {
+  return `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+remaining = [c for c in num_cols if c != outcome and c != treatment]
+mediator = '${mediator}' if '${mediator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
+remaining2 = [c for c in remaining if c != mediator]
+moderator = '${moderator}' if '${moderator}' in df.columns else (remaining2[0] if len(remaining2) > 0 else None)
+
+if not all([outcome, treatment, mediator, moderator]):
+    print("ERROR: 분석에 필요한 변수(X, M, W, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"매개변수(M): {mediator}")
+    print(f"조절변수(W): {moderator}")
+    print(f"종속변수(Y): {outcome}")`;
+}
+
+function getAutoDetectHierarchical(outcome, treatment) {
+  return `
+# === 변수 자동감지 ===
+numeric_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in numeric_df.columns if c not in id_cols]
+
+outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
+treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+
+if not outcome or not treatment:
+    print("ERROR: 분석에 필요한 변수(X, Y)를 찾을 수 없습니다.")
+    print(f"  사용 가능 컬럼: {list(df.columns)}")
+else:
+    print(f"독립변수(X): {treatment}")
+    print(f"종속변수(Y): {outcome}")`;
+}
+
+// ─── Common descriptive items ────────────────────────────────────
+
+function getCommonDescriptiveItems(outcome, treatment) {
+  return [
     {
-      id: 'descriptive',
-      title: '기술통계 확인',
+      id: 'basic_stats',
+      label: '기술통계 확인',
+      checked: true,
       description: '데이터의 기본 특성(평균, 표준편차, 분포)을 확인합니다.',
-      codeTemplate: {
-        python: `import pandas as pd
+      code: `import pandas as pd
 import numpy as np
 
 # 데이터 로드
@@ -50,16 +145,30 @@ if cat_cols:
 
 # 변수별 결측치 확인
 print("\\n=== 결측치 ===")
-print(df.isnull().sum())
+print(df.isnull().sum())`,
+      refLinks: [
+        { label: 'Pandas Describe', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.08-aggregation-and-grouping.html' }
+      ]
+    },
+    {
+      id: 'correlation',
+      label: '상관행렬 (유의성 포함)',
+      checked: true,
+      description: '수치형 변수 간 상관계수와 유의성을 확인합니다.',
+      code: `import pandas as pd
+import numpy as np
+from scipy import stats as sp_stats
 
-# 상관행렬 + 유의성 (수치형, 식별자 제외)
+df = pd.read_csv('mock_data.csv')
+
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
+numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
+
 if len(numeric_df.columns) > 1:
-    from scipy import stats as sp_stats
     corr = numeric_df.corr()
     n = len(numeric_df)
     cols = numeric_df.columns
-    print("\\n=== 상관행렬 (유의성: * p<.05, ** p<.01, *** p<.001) ===")
-    # 유의성 표기 포함 상관행렬
+    print("=== 상관행렬 (유의성: * p<.05, ** p<.01, *** p<.001) ===")
     result_lines = [' ' * 25 + '  '.join(f'{c:>12}' for c in cols)]
     for i, r in enumerate(cols):
         row_vals = []
@@ -72,68 +181,106 @@ if len(numeric_df.columns) > 1:
                 p_val = 2 * (1 - sp_stats.t.cdf(abs(t_stat), n-2)) if abs(r_val) < 1 else 0
                 sig = '***' if p_val < .001 else '**' if p_val < .01 else '*' if p_val < .05 else ''
                 row_vals.append(f'{r_val:>9.3f}{sig:<3}')
-        print(f'{r:<25}' + '  '.join(row_vals))`,
-        r: `library(dplyr)
-
-# 데이터 로드
-df <- read.csv('mock_data.csv')
-
-# 기술통계
-summary(df)
-
-# 결측치 확인
-sapply(df, function(x) sum(is.na(x)))
-
-# 상관행렬 (수치형만)
-cor(df[sapply(df, is.numeric)], use="complete.obs") |> round(3)`
-      }
+        print(f'{r:<25}' + '  '.join(row_vals))
+else:
+    print("상관행렬 계산에 2개 이상의 수치형 변수가 필요합니다.")`,
+      refLinks: [
+        { label: 'Correlation Analysis', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.02-introducing-scikit-learn.html' }
+      ]
     }
   ];
+}
 
-  // analysis_design 기반 전용 Step (매개/조절/위계적 회귀)
+// ─── Main export ─────────────────────────────────────────────────
+
+/**
+ * 분석 카테고리별 3-Group Step 목록 반환
+ * @param {string} category - 분석 카테고리
+ * @param {Object} methodMeta - Agent 1의 detected_method
+ * @param {Object} paperContext - Agent 1의 paper_context
+ * @returns {{ descriptive: { label: string, items: Array }, inferential: { label: string, items: Array }, visualization: { label: string, items: Array } }}
+ */
+export function getStepsForCategory(category, methodMeta, paperContext) {
+  const keyVars = methodMeta?.key_variables || {};
+  const outcome = keyVars.outcome || 'y';
+  const treatment = keyVars.treatment || 'x';
   const analysisDesign = methodMeta?.analysis_design || {};
   const framework = analysisDesign.framework || 'none';
 
+  // Design-specific (mediation/moderation/etc) - when framework !== 'none' and category === 'regression'
   if (framework !== 'none' && category === 'regression') {
-    const designSteps = getDesignSpecificSteps(framework, analysisDesign, keyVars);
-    if (designSteps.length > 0) {
-      return [...baseSteps, ...designSteps];
+    const mediator = analysisDesign.mediator || 'mediator_var';
+    const moderator = analysisDesign.moderator || 'moderator_var';
+    const covariates = (analysisDesign.covariates || []).join("', '");
+
+    switch (framework) {
+      case 'mediation':
+      case 'PROCESS':
+        if (analysisDesign.moderator && analysisDesign.mediator) {
+          return getModeratedMediationMenu(outcome, treatment, mediator, moderator, covariates);
+        }
+        if (analysisDesign.moderator && !analysisDesign.mediator) {
+          return getModerationMenu(outcome, treatment, moderator, covariates);
+        }
+        return getMediationMenu(outcome, treatment, mediator, covariates);
+
+      case 'moderation':
+        return getModerationMenu(outcome, treatment, moderator, covariates);
+
+      case 'moderated_mediation':
+        return getModeratedMediationMenu(outcome, treatment, mediator, moderator, covariates);
+
+      case 'hierarchical_regression':
+        return getHierarchicalRegressionMenu(outcome, treatment, covariates);
+
+      case 'path_analysis':
+        return getMediationMenu(outcome, treatment, mediator, covariates);
+
+      default:
+        break;
     }
   }
 
-  // Category-specific steps (기존)
-  const categorySteps = getCategorySpecificSteps(category, analysisType, keyVars, paperContext);
-
-  return [...baseSteps, ...categorySteps];
+  // Category-specific
+  return getCategoryMenu(category, outcome, treatment, keyVars, paperContext);
 }
 
-function getCategorySpecificSteps(category, analysisType, keyVars, paperContext) {
-  const outcome = keyVars.outcome || 'outcome_var';
-  const treatment = keyVars.treatment || 'treatment_var';
-  const controls = keyVars.controls || 'control_vars';
+// ─── Category router ─────────────────────────────────────────────
 
-  // 공통 변수 자동감지 코드 (모든 카테고리에서 재사용)
-  const autoDetectBase = `
-# === 변수 자동감지 ===
-numeric_df = df.select_dtypes(include='number')
-_skip = ['id', 'ID', 'entity_id', 'Unnamed: 0', 'year', 'time']
-num_cols = [c for c in numeric_df.columns if c not in _skip]
+function getCategoryMenu(category, outcome, treatment, keyVars, paperContext) {
+  switch (category) {
+    case 'regression':        return getRegressionMenu(outcome, treatment);
+    case 'causal_inference':  return getCausalInferenceMenu(outcome, treatment);
+    case 'spatial':           return getSpatialMenu(outcome, treatment);
+    case 'time_series':       return getTimeSeriesMenu(outcome, treatment);
+    case 'machine_learning':  return getMachineLearningMenu(outcome, treatment);
+    case 'causal_ml':         return getCausalMlMenu(outcome, treatment);
+    case 'bayesian':          return getBayesianMenu(outcome, treatment);
+    case 'sem':               return getSemMenu(outcome, treatment);
+    case 'survival':          return getSurvivalMenu(outcome, treatment);
+    case 'meta_analysis':     return getMetaAnalysisMenu(outcome, treatment);
+    case 'unstructured_data': return getUnstructuredDataMenu(outcome, treatment);
+    case 'experimental':      return getExperimentalMenu(outcome, treatment);
+    default:                  return getDefaultMenu(outcome, treatment);
+  }
+}
 
-outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
-treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
-remaining = [c for c in num_cols if c != outcome and c != treatment]
+// ─── Regression ──────────────────────────────────────────────────
 
-if outcome: print(f"종속변수(Y): {outcome}")
-if treatment: print(f"독립변수(X): {treatment}")`;
+function getRegressionMenu(outcome, treatment) {
+  const autoDetectBase = getAutoDetectBase(outcome, treatment);
 
-  const stepsMap = {
-    regression: [
-      {
-        id: 'preprocessing',
-        title: '데이터 전처리',
-        description: '결측치 처리, 변수 변환, 더미 변수 생성 등 분석 준비를 합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '데이터 전처리',
+          checked: true,
+          description: '결측치 처리, 변수 변환, 더미 변수 생성 등 분석 준비를 합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv')
@@ -142,17 +289,21 @@ ${autoDetectBase}
 
 print(f"\\n전처리 후 데이터: {df.shape[0]}행 × {df.shape[1]}열")
 print(df.head())`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-cat(sprintf("전처리 후 데이터: %d행 × %d열\\n", nrow(df), ncol(df)))
-head(df)`
+          refLinks: [
+            { label: 'Data Manipulation', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.00-introduction-to-pandas.html' }
+          ]
         }
-      },
-      {
-        id: 'baseline',
-        title: '기본 모형 추정 (OLS)',
-        description: '최소자승법(OLS)으로 기본 회귀 모형을 추정합니다.',
-        codeTemplate: {
-          python: `import statsmodels.api as sm
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'baseline',
+          label: '기본 모형 추정 (OLS)',
+          checked: true,
+          description: '최소자승법(OLS)으로 기본 회귀 모형을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -163,19 +314,16 @@ X1 = sm.add_constant(df[[treatment]])
 model1 = sm.OLS(df[outcome], X1).fit(cov_type='HC1')
 print("\\n=== Model 1: 기본 모형 ===")
 print(model1.summary())`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-y <- nums[1]; x <- nums[2]
-f <- as.formula(paste(y, "~", x))
-summary(lm(f, data=df))`
-        }
-      },
-      {
-        id: 'full_model',
-        title: '확장 모형 추정 (통제변수 포함)',
-        description: '통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
-        codeTemplate: {
-          python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'Linear Regression', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'full_model',
+          label: '확장 모형 추정 (통제변수 포함)',
+          checked: true,
+          description: '통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -187,17 +335,21 @@ X2 = sm.add_constant(df[[treatment] + control_cols])
 model2 = sm.OLS(df[outcome], X2).fit(cov_type='HC1')
 print("\\n=== Model 2: 통제변수 포함 ===")
 print(model2.summary())`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-model2 <- lm(as.formula(paste(names(df)[1], "~ .")), data=Filter(is.numeric, df))
-summary(model2)`
+          refLinks: [
+            { label: 'Multiple Regression', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '시각화',
-        description: '계수 forest plot과 잔차 진단 그래프를 생성합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '계수 Forest Plot',
+          checked: true,
+          description: '계수 forest plot과 잔차 진단 그래프를 생성합니다.',
+          code: `import matplotlib.pyplot as plt
 import numpy as np
 import statsmodels.api as sm
 import pandas as pd
@@ -221,30 +373,29 @@ ax.set_xlabel('계수 추정치')
 ax.set_title('회귀 계수 Forest Plot')
 plt.tight_layout()
 plt.show()`,
-          r: `library(ggplot2)
-library(broom)
-df <- read.csv('mock_data.csv') |> na.omit()
-
-model <- lm(${outcome} ~ ., data=df)
-td <- tidy(model, conf.int=TRUE) |> filter(term != "(Intercept)")
-
-ggplot(td, aes(x=estimate, y=term)) +
-  geom_point() +
-  geom_errorbarh(aes(xmin=conf.low, xmax=conf.high), height=0.2) +
-  geom_vline(xintercept=0, linetype="dashed", color="red") +
-  labs(title="회귀 계수 Forest Plot", x="계수 추정치", y="변수") +
-  theme_minimal()`
+          refLinks: [
+            { label: 'Matplotlib Basics', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    causal_inference: [
-      {
-        id: 'preprocessing',
-        title: '데이터 전처리',
-        description: '데이터 구조 확인, 변수 분포, 결측치를 점검합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Causal Inference ────────────────────────────────────────────
+
+function getCausalInferenceMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '데이터 전처리',
+          checked: true,
+          description: '데이터 구조 확인, 변수 분포, 결측치를 점검합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv')
@@ -272,35 +423,32 @@ if target_y in df.columns:
     print(f"종속변수(Y): {target_y}")
 else:
     candidates = [c for c in numeric_df.columns]
-    print(f"⚠️ '{target_y}' 컬럼 없음. 사용 가능: {candidates}")
+    print(f"\\u26a0\\ufe0f '{target_y}' 컬럼 없음. 사용 가능: {candidates}")
 if target_x in df.columns:
     print(f"독립변수(X): {target_x}")
 else:
     candidates = [c for c in numeric_df.columns]
-    print(f"⚠️ '{target_x}' 컬럼 없음. 사용 가능: {candidates}")
+    print(f"\\u26a0\\ufe0f '{target_x}' 컬럼 없음. 사용 가능: {candidates}")
 
 # 연도별 종속변수 평균
 if has_panel and target_y in df.columns:
     print(f"\\n=== 연도별 {target_y} 평균 ===")
     print(df.groupby('year')[target_y].mean().round(3))`,
-          r: `library(dplyr)
-df <- read.csv('mock_data.csv')
-cat("총 관측치:", nrow(df), "\\n")
-cat("컬럼:", paste(names(df), collapse=", "), "\\n")
-if ("entity_id" %in% names(df)) cat("개체 수:", n_distinct(df$entity_id), "\\n")
-if ("year" %in% names(df)) cat("시간 범위:", min(df$year), "~", max(df$year), "\\n")
-id_cols <- c("entity_id", "year", "time", "id", "ID")
-num_df <- df[sapply(df, is.numeric)]
-num_df <- num_df[, !names(num_df) %in% id_cols, drop=FALSE]
-summary(num_df)`
+          refLinks: [
+            { label: 'Panel Data', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.08-aggregation-and-grouping.html' }
+          ]
         }
-      },
-      {
-        id: 'baseline_fe',
-        title: '기본 모형',
-        description: '핵심 독립변수와 종속변수의 관계를 추정합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'baseline_fe',
+          label: '기본 모형',
+          checked: true,
+          description: '핵심 독립변수와 종속변수의 관계를 추정합니다.',
+          code: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
@@ -315,7 +463,7 @@ target_y = '${outcome}' if '${outcome}' in df.columns else (analysis_cols[0] if 
 target_x = '${treatment}' if '${treatment}' in df.columns else (analysis_cols[1] if len(analysis_cols) > 1 else None)
 
 if not target_y or not target_x:
-    print(f"⚠️ 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
+    print(f"\\u26a0\\ufe0f 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
 else:
     print(f"종속변수: {target_y}, 독립변수: {target_x}")
     y = pd.to_numeric(df[target_y], errors='coerce').dropna()
@@ -345,24 +493,16 @@ else:
     print(model1.summary().tables[1])
     print(f"\\nR-squared: {model1.rsquared:.4f}")
     print(f"관측치: {len(y)}")`,
-          r: `df <- read.csv('mock_data.csv')
-num_cols <- names(df)[sapply(df, is.numeric)]
-id_cols <- c("entity_id", "year", "time", "id", "ID")
-analysis_cols <- setdiff(num_cols, id_cols)
-cat("분석 가능 변수:", paste(analysis_cols, collapse=", "), "\\n")
-if (length(analysis_cols) >= 2) {
-  f <- as.formula(paste(analysis_cols[1], "~", analysis_cols[2]))
-  model1 <- lm(f, data=df)
-  summary(model1)
-}`
-        }
-      },
-      {
-        id: 'full_model_fe',
-        title: '확장 모형 (통제변수 포함)',
-        description: '통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Fixed Effects', url: 'https://www.kaggle.com/learn/intro-to-machine-learning' }
+          ]
+        },
+        {
+          id: 'full_model_fe',
+          label: '확장 모형 (통제변수 포함)',
+          checked: true,
+          description: '통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
+          code: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
@@ -377,7 +517,7 @@ target_y = '${outcome}' if '${outcome}' in df.columns else (analysis_cols[0] if 
 target_x = '${treatment}' if '${treatment}' in df.columns else (analysis_cols[1] if len(analysis_cols) > 1 else None)
 
 if not target_y or not target_x:
-    print(f"⚠️ 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
+    print(f"\\u26a0\\ufe0f 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
 else:
     # 통제변수: 종속/독립 제외한 나머지 수치형
     control_cols = [c for c in analysis_cols if c not in [target_y, target_x]][:4]
@@ -407,23 +547,16 @@ else:
     print(model2.summary().tables[1])
     print(f"\\nR-squared: {model2.rsquared:.4f}")
     print(f"관측치: {len(y)}")`,
-          r: `df <- read.csv('mock_data.csv')
-num_cols <- names(df)[sapply(df, is.numeric)]
-id_cols <- c("entity_id", "year", "time", "id", "ID")
-analysis_cols <- setdiff(num_cols, id_cols)
-if (length(analysis_cols) >= 3) {
-  f <- as.formula(paste(analysis_cols[1], "~", paste(analysis_cols[-1], collapse=" + ")))
-  model2 <- lm(f, data=df)
-  summary(model2)
-}`
-        }
-      },
-      {
-        id: 'robustness',
-        title: '강건성 검정',
-        description: 'Pooled OLS 비교, 부트스트래핑 등을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Robust SE', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'robustness',
+          label: '강건성 검정',
+          checked: false,
+          description: 'Pooled OLS 비교, 부트스트래핑 등을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
@@ -438,7 +571,7 @@ target_y = '${outcome}' if '${outcome}' in df.columns else (analysis_cols[0] if 
 target_x = '${treatment}' if '${treatment}' in df.columns else (analysis_cols[1] if len(analysis_cols) > 1 else None)
 
 if not target_y or not target_x:
-    print(f"⚠️ 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
+    print(f"\\u26a0\\ufe0f 분석 변수를 찾을 수 없습니다. 사용 가능 컬럼: {analysis_cols}")
 else:
     sub = df[[target_y, target_x]].apply(pd.to_numeric, errors='coerce').dropna()
     y = sub[target_y].astype(float)
@@ -451,7 +584,7 @@ else:
     print(f"계수({target_x}): {pooled.params.iloc[1]:.4f}")
     print(f"SE: {pooled.bse.iloc[1]:.4f}")
     print(f"p-value: {pooled.pvalues.iloc[1]:.4f}")
-    print(f"R²: {pooled.rsquared:.4f}")
+    print(f"R\\u00b2: {pooled.rsquared:.4f}")
 
     # 부트스트래핑 CI
     boot_coefs = []
@@ -479,24 +612,21 @@ else:
             print(re_result.summary().tables[1])
         except Exception as e:
             print(f"\\nRandom Effects 추정 실패: {e}")`,
-          r: `df <- read.csv('mock_data.csv')
-num_cols <- names(df)[sapply(df, is.numeric)]
-id_cols <- c("entity_id", "year", "time", "id", "ID")
-analysis_cols <- setdiff(num_cols, id_cols)
-if (length(analysis_cols) >= 2) {
-  f <- as.formula(paste(analysis_cols[1], "~", analysis_cols[2]))
-  pooled <- lm(f, data=df)
-  cat("=== Pooled OLS ===\\n")
-  summary(pooled)
-}`
+          refLinks: [
+            { label: 'Bootstrap Methods', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.03-hyperparameters-and-model-validation.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '시각화',
-        description: '주요 변수의 추이와 분포를 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '추이 및 산점도',
+          checked: true,
+          description: '주요 변수의 추이와 분포를 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
@@ -546,28 +676,29 @@ elif target_y and target_x:
     plt.show()
 else:
     print("시각화할 변수를 찾을 수 없습니다.")`,
-          r: `library(ggplot2)
-df <- read.csv('mock_data.csv')
-num_cols <- names(df)[sapply(df, is.numeric)]
-id_cols <- c("entity_id", "year", "time", "id", "ID")
-analysis_cols <- setdiff(num_cols, id_cols)
-if (length(analysis_cols) >= 2) {
-  ggplot(df, aes_string(x=analysis_cols[2], y=analysis_cols[1])) +
-    geom_point(alpha=0.3) + geom_smooth(method="lm") +
-    labs(title=paste(analysis_cols[2], "vs", analysis_cols[1])) +
-    theme_minimal()
-}`
+          refLinks: [
+            { label: 'Matplotlib', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    spatial: [
-      {
-        id: 'preprocessing',
-        title: '공간 데이터 전처리',
-        description: '공간 단위(지역/좌표) 확인, 공간 가중치 행렬 준비, 이상값 탐색을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Spatial ─────────────────────────────────────────────────────
+
+function getSpatialMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '공간 데이터 전처리',
+          checked: true,
+          description: '공간 단위(지역/좌표) 확인, 공간 가중치 행렬 준비, 이상값 탐색을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv')
@@ -581,29 +712,31 @@ print(df.describe().round(3))
 
 # 공간적 분포 확인
 print("\\n=== 종속변수 분포 ===")
-print(f"평균: {df[outcome].mean():.3f}")
-print(f"표준편차: {df[outcome].std():.3f}")
-print(f"왜도: {df[outcome].skew():.3f}")`,
-          r: `library(dplyr)
-df <- read.csv('mock_data.csv')
-summary(df)
-cat("\\n고유 지역 수:", n_distinct(df[,1]), "\\n")
-hist(df$${outcome}, main="종속변수 분포", xlab="${outcome}")`
+print(f"평균: {df['${outcome}'].mean():.3f}")
+print(f"표준편차: {df['${outcome}'].std():.3f}")
+print(f"왜도: {df['${outcome}'].skew():.3f}")`,
+          refLinks: [
+            { label: 'Spatial Data', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.00-introduction-to-pandas.html' }
+          ]
         }
-      },
-      {
-        id: 'ols_baseline',
-        title: 'OLS 기준 모형 (공간효과 미포함)',
-        description: '공간효과를 고려하지 않은 OLS 모형을 추정하여 기준선을 설정합니다.',
-        codeTemplate: {
-          python: `import statsmodels.api as sm
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'ols_baseline',
+          label: 'OLS 기준 모형 (공간효과 미포함)',
+          checked: true,
+          description: '공간효과를 고려하지 않은 OLS 모형을 추정하여 기준선을 설정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
 
 # OLS 기준 모형
-X = sm.add_constant(df[[treatment]])
-model_ols = sm.OLS(df[outcome], X).fit(cov_type='HC1')
+X = sm.add_constant(df[['${treatment}']])
+model_ols = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
 print("=== OLS 기준 모형 ===")
 print(model_ols.summary())
 
@@ -612,18 +745,16 @@ print("\\n=== 잔차 기술통계 ===")
 resid = model_ols.resid
 print(f"평균: {resid.mean():.6f}")
 print(f"Durbin-Watson: {sm.stats.durbin_watson(resid):.3f}")`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-model_ols <- lm(${outcome} ~ ${treatment}, data=df)
-summary(model_ols)
-car::durbinWatsonTest(model_ols)`
-        }
-      },
-      {
-        id: 'spatial_model',
-        title: '공간 회귀 모형 (SAR/SEM)',
-        description: '공간 자기상관을 고려한 SAR(Spatial Autoregressive) 또는 SEM(Spatial Error Model)을 추정합니다.',
-        codeTemplate: {
-          python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'OLS Regression', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'spatial_model',
+          label: '공간 회귀 모형 (SAR/SEM)',
+          checked: true,
+          description: '공간 자기상관을 고려한 SAR(Spatial Autoregressive) 또는 SEM(Spatial Error Model)을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 import numpy as np
 
@@ -634,26 +765,27 @@ df = pd.read_csv('mock_data.csv').dropna()
 region_col = df.columns[0]  # 첫 번째 열을 지역 변수로 가정
 df_dummies = pd.get_dummies(df, columns=[region_col], drop_first=True, dtype=int)
 
-X = sm.add_constant(df_dummies.drop(columns=[outcome]))
-model_fe = sm.OLS(df_dummies[outcome], X).fit(cov_type='HC1')
+X = sm.add_constant(df_dummies.drop(columns=['${outcome}']))
+model_fe = sm.OLS(df_dummies['${outcome}'], X).fit(cov_type='HC1')
 print("=== 지역 고정효과 모형 ===")
-print(f"R²: {model_fe.rsquared:.4f}")
-print(f"Adj R²: {model_fe.rsquared_adj:.4f}")
-print(f"{treatment} 계수: {model_fe.params[treatment]:.4f} (p={model_fe.pvalues[treatment]:.4f})")`,
-          r: `library(lmtest)
-df <- read.csv('mock_data.csv') |> na.omit()
-
-# 지역 고정효과 모형
-model_fe <- lm(${outcome} ~ ${treatment} + factor(df[,1]), data=df)
-coeftest(model_fe, vcov=vcovHC(model_fe, type="HC1"))`
+print(f"R\\u00b2: {model_fe.rsquared:.4f}")
+print(f"Adj R\\u00b2: {model_fe.rsquared_adj:.4f}")
+print(f"${'${treatment}'} 계수: {model_fe.params['${treatment}']:.4f} (p={model_fe.pvalues['${treatment}']:.4f})")`,
+          refLinks: [
+            { label: 'Spatial Analysis', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '공간 패턴 시각화',
-        description: '지역별 분포 히트맵, 잔차 패턴 등을 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '공간 패턴 시각화',
+          checked: true,
+          description: '지역별 분포 히트맵, 잔차 패턴 등을 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
@@ -663,42 +795,48 @@ fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
 # 지역별 평균 비교
 region_col = df.columns[0]
-region_means = df.groupby(region_col)[outcome].mean().sort_values()
+region_means = df.groupby(region_col)['${outcome}'].mean().sort_values()
 axes[0].barh(range(min(len(region_means),20)), region_means.values[:20])
 axes[0].set_yticks(range(min(len(region_means),20)))
 axes[0].set_yticklabels(region_means.index[:20], fontsize=8)
-axes[0].set_xlabel(f'평균 {outcome}')
-axes[0].set_title(f'지역별 {outcome} 평균')
+axes[0].set_xlabel(f'평균 ${'${outcome}'}')
+axes[0].set_title(f'지역별 ${'${outcome}'} 평균')
 
 # 핵심 변수 산점도
-axes[1].scatter(df[treatment], df[outcome], alpha=0.4, s=20)
-z = np.polyfit(df[treatment].dropna(), df[outcome].dropna(), 1)
+axes[1].scatter(df['${treatment}'], df['${outcome}'], alpha=0.4, s=20)
+z = np.polyfit(df['${treatment}'].dropna(), df['${outcome}'].dropna(), 1)
 p = np.poly1d(z)
-x_line = np.linspace(df[treatment].min(), df[treatment].max(), 100)
+x_line = np.linspace(df['${treatment}'].min(), df['${treatment}'].max(), 100)
 axes[1].plot(x_line, p(x_line), 'r--', alpha=0.8)
-axes[1].set_xlabel(f'{treatment}')
-axes[1].set_ylabel(f'{outcome}')
+axes[1].set_xlabel('${treatment}')
+axes[1].set_ylabel('${outcome}')
 axes[1].set_title('핵심 변수 관계')
 
 plt.tight_layout()
 plt.show()`,
-          r: `library(ggplot2)
-df <- read.csv('mock_data.csv')
-
-ggplot(df, aes(x=${treatment}, y=${outcome})) +
-  geom_point(alpha=0.4) + geom_smooth(method="lm") +
-  labs(title="공간 데이터: 핵심 변수 관계") + theme_minimal()`
+          refLinks: [
+            { label: 'Visualization', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    time_series: [
-      {
-        id: 'preprocessing',
-        title: '시계열 데이터 전처리',
-        description: '시간 변수 파싱, 정상성(stationarity) 검정, 결측치 보간을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Time Series ─────────────────────────────────────────────────
+
+function getTimeSeriesMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '시계열 데이터 전처리',
+          checked: true,
+          description: '시간 변수 파싱, 정상성(stationarity) 검정, 결측치 보간을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 from scipy import stats
 
@@ -710,8 +848,8 @@ print(f"관측치 수: {len(df)}")
 print(f"열: {list(df.columns)}")
 
 # 종속변수 시계열 특성
-y = df[outcome]
-print(f"\\n=== {outcome} 시계열 특성 ===")
+y = df['${outcome}']
+print(f"\\n=== ${'${outcome}'} 시계열 특성 ===")
 print(f"평균: {y.mean():.3f}")
 print(f"표준편차: {y.std():.3f}")
 print(f"자기상관(lag 1): {y.autocorr(lag=1):.3f}")
@@ -720,24 +858,26 @@ print(f"자기상관(lag 1): {y.autocorr(lag=1):.3f}")
 n = len(y)
 tau, p_val = stats.kendalltau(range(n), y)
 print(f"추세 (Kendall tau): {tau:.3f} (p={p_val:.4f})")`,
-          r: `df <- read.csv('mock_data.csv')
-y <- ts(df$${outcome})
-plot(y, main="시계열 플롯", ylab="${outcome}")
-acf(y, main="자기상관함수(ACF)")
-pacf(y, main="편자기상관함수(PACF)")`
+          refLinks: [
+            { label: 'Time Series', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.11-working-with-time-series.html' }
+          ]
         }
-      },
-      {
-        id: 'stationarity',
-        title: '정상성 검정 (ADF / KPSS)',
-        description: '단위근 검정으로 시계열의 정상성 여부를 확인합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'stationarity',
+          label: '정상성 검정 (ADF / KPSS)',
+          checked: true,
+          description: '단위근 검정으로 시계열의 정상성 여부를 확인합니다.',
+          code: `import pandas as pd
 import numpy as np
 from statsmodels.tsa.stattools import adfuller, kpss
 
 df = pd.read_csv('mock_data.csv')
-y = df[outcome].dropna()
+y = df['${outcome}'].dropna()
 
 # ADF 검정 (H0: 단위근 존재 = 비정상)
 adf_result = adfuller(y, autolag='AIC')
@@ -754,29 +894,23 @@ if adf_result[1] >= 0.05:
     print(f"ADF 통계량: {adf_diff[0]:.4f}")
     print(f"p-value: {adf_diff[1]:.4f}")
     print(f"결론: {'정상' if adf_diff[1] < 0.05 else '여전히 비정상'}")`,
-          r: `library(tseries)
-df <- read.csv('mock_data.csv')
-y <- df$${outcome}
-
-# ADF 검정
-adf.test(y)
-# 1차 차분 후
-adf.test(diff(y))`
-        }
-      },
-      {
-        id: 'arima',
-        title: 'ARIMA 모형 추정',
-        description: 'ARIMA(p,d,q) 모형을 추정하고 잔차 진단을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Stationarity', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.11-working-with-time-series.html' }
+          ]
+        },
+        {
+          id: 'arima',
+          label: 'ARIMA 모형 추정',
+          checked: true,
+          description: 'ARIMA(p,d,q) 모형을 추정하고 잔차 진단을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 from statsmodels.tsa.arima.model import ARIMA
 import warnings
 warnings.filterwarnings('ignore')
 
 df = pd.read_csv('mock_data.csv')
-y = df[outcome].dropna().values
+y = df['${outcome}'].dropna().values
 
 # ARIMA 모형 탐색 (간단한 그리드 서치)
 best_aic = np.inf
@@ -799,28 +933,27 @@ print(f"최적 ARIMA 차수: {best_order} (AIC: {best_aic:.2f})")
 model = ARIMA(y, order=best_order).fit()
 print("\\n=== ARIMA 모형 요약 ===")
 print(model.summary())`,
-          r: `library(forecast)
-df <- read.csv('mock_data.csv')
-y <- ts(df$${outcome})
-
-# 자동 ARIMA
-model <- auto.arima(y)
-summary(model)
-checkresiduals(model)`
+          refLinks: [
+            { label: 'ARIMA', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.11-working-with-time-series.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '시계열 시각화',
-        description: '원 시계열, 예측값, ACF/PACF를 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '시계열 시각화',
+          checked: true,
+          description: '원 시계열, 예측값, ACF/PACF를 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
 df = pd.read_csv('mock_data.csv')
-y = df[outcome].dropna()
+y = df['${outcome}'].dropna()
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
@@ -846,26 +979,29 @@ axes[1,1].set_title('PACF')
 
 plt.tight_layout()
 plt.show()`,
-          r: `library(forecast)
-df <- read.csv('mock_data.csv')
-y <- ts(df$${outcome})
-
-par(mfrow=c(2,2))
-plot(y, main="원 시계열")
-plot(ma(y, 12), main="이동평균")
-acf(y, main="ACF")
-pacf(y, main="PACF")`
+          refLinks: [
+            { label: 'Time Series Viz', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    machine_learning: [
-      {
-        id: 'preprocessing',
-        title: '데이터 전처리 및 분할',
-        description: '특성 스케일링, 결측치 처리, 학습/검증/테스트 세트 분할을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Machine Learning ────────────────────────────────────────────
+
+function getMachineLearningMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '데이터 전처리 및 분할',
+          checked: true,
+          description: '특성 스케일링, 결측치 처리, 학습/검증/테스트 세트 분할을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -873,8 +1009,8 @@ from sklearn.preprocessing import StandardScaler
 df = pd.read_csv('mock_data.csv').dropna()
 
 # 특성과 타깃 분리
-X = df.drop(columns=[outcome])
-y = df[outcome]
+X = df.drop(columns=['${outcome}'])
+y = df['${outcome}']
 
 # 수치형만 선택
 X = X.select_dtypes(include=[np.number])
@@ -891,20 +1027,21 @@ print(f"학습 세트: {X_train.shape}")
 print(f"테스트 세트: {X_test.shape}")
 print(f"특성: {list(X.columns)}")
 print(f"타깃 평균: {y.mean():.3f}")`,
-          r: `library(caret)
-df <- read.csv('mock_data.csv') |> na.omit()
-set.seed(42)
-idx <- createDataPartition(df$${outcome}, p=0.8, list=FALSE)
-train_df <- df[idx,]; test_df <- df[-idx,]
-cat("학습:", nrow(train_df), "/ 테스트:", nrow(test_df))`
+          refLinks: [
+            { label: 'Train/Test Split', url: 'https://scikit-learn.org/stable/modules/cross_validation.html' }
+          ]
         }
-      },
-      {
-        id: 'model_training',
-        title: '모형 학습 (Random Forest / Gradient Boosting)',
-        description: 'Random Forest와 Gradient Boosting 모형을 학습하고 성능을 비교합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'model_training',
+          label: '모형 학습 (Random Forest / Gradient Boosting)',
+          checked: true,
+          description: 'Random Forest와 Gradient Boosting 모형을 학습하고 성능을 비교합니다.',
+          code: `import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
@@ -912,8 +1049,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = df.drop(columns=[outcome]).select_dtypes(include=[np.number])
-y = df[outcome]
+X = df.drop(columns=['${outcome}']).select_dtypes(include=[np.number])
+y = df['${outcome}']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # Random Forest
@@ -921,7 +1058,7 @@ rf = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=5)
 rf.fit(X_train, y_train)
 rf_pred = rf.predict(X_test)
 print("=== Random Forest ===")
-print(f"R²: {r2_score(y_test, rf_pred):.4f}")
+print(f"R\\u00b2: {r2_score(y_test, rf_pred):.4f}")
 print(f"RMSE: {np.sqrt(mean_squared_error(y_test, rf_pred)):.4f}")
 
 # Gradient Boosting
@@ -929,33 +1066,26 @@ gb = GradientBoostingRegressor(n_estimators=100, random_state=42, max_depth=3)
 gb.fit(X_train, y_train)
 gb_pred = gb.predict(X_test)
 print("\\n=== Gradient Boosting ===")
-print(f"R²: {r2_score(y_test, gb_pred):.4f}")
+print(f"R\\u00b2: {r2_score(y_test, gb_pred):.4f}")
 print(f"RMSE: {np.sqrt(mean_squared_error(y_test, gb_pred)):.4f}")`,
-          r: `library(randomForest)
-library(caret)
-df <- read.csv('mock_data.csv') |> na.omit()
-set.seed(42)
-idx <- createDataPartition(df$${outcome}, p=0.8, list=FALSE)
-train_df <- df[idx,]; test_df <- df[-idx,]
-
-rf <- randomForest(${outcome} ~ ., data=train_df, ntree=100)
-print(rf)
-importance(rf)`
-        }
-      },
-      {
-        id: 'feature_importance',
-        title: '특성 중요도 분석',
-        description: '모형의 특성 중요도를 분석하여 핵심 예측 변수를 식별합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Random Forests', url: 'https://scikit-learn.org/stable/modules/ensemble.html' },
+            { label: 'Kaggle ML', url: 'https://www.kaggle.com/learn/intro-to-machine-learning' }
+          ]
+        },
+        {
+          id: 'feature_importance',
+          label: '특성 중요도 분석',
+          checked: true,
+          description: '모형의 특성 중요도를 분석하여 핵심 예측 변수를 식별합니다.',
+          code: `import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = df.drop(columns=[outcome]).select_dtypes(include=[np.number])
-y = df[outcome]
+X = df.drop(columns=['${outcome}']).select_dtypes(include=[np.number])
+y = df['${outcome}']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 rf = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=5)
@@ -965,20 +1095,23 @@ rf.fit(X_train, y_train)
 imp = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
 print("=== 특성 중요도 (Impurity-based) ===")
 for feat, val in imp.items():
-    bar = '█' * int(val * 50)
+    bar = '\\u2588' * int(val * 50)
     print(f"  {feat:20s}: {val:.4f} {bar}")`,
-          r: `library(randomForest)
-df <- read.csv('mock_data.csv') |> na.omit()
-rf <- randomForest(${outcome} ~ ., data=df, ntree=100)
-varImpPlot(rf, main="특성 중요도")`
+          refLinks: [
+            { label: 'Feature Importance', url: 'https://scikit-learn.org/stable/modules/ensemble.html#feature-importance-evaluation' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '모형 성능 시각화',
-        description: '예측 vs 실측, 잔차 분포, 특성 중요도 차트를 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '모형 성능 시각화',
+          checked: true,
+          description: '예측 vs 실측, 잔차 분포, 특성 중요도 차트를 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
@@ -986,8 +1119,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = df.drop(columns=[outcome]).select_dtypes(include=[np.number])
-y = df[outcome]
+X = df.drop(columns=['${outcome}']).select_dtypes(include=[np.number])
+y = df['${outcome}']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 rf = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=5)
@@ -1000,7 +1133,7 @@ fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 axes[0].scatter(y_test, pred, alpha=0.5, s=20)
 axes[0].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
 axes[0].set_xlabel('실측'); axes[0].set_ylabel('예측')
-axes[0].set_title(f'예측 vs 실측 (R²={r2_score(y_test,pred):.3f})')
+axes[0].set_title(f'예측 vs 실측 (R\\u00b2={r2_score(y_test,pred):.3f})')
 
 # 잔차 분포
 residuals = y_test - pred
@@ -1014,58 +1147,70 @@ axes[2].set_xlabel('중요도'); axes[2].set_title('특성 중요도')
 
 plt.tight_layout()
 plt.show()`,
-          r: `library(ggplot2)
-df <- read.csv('mock_data.csv') |> na.omit()
-plot(df$${treatment}, df$${outcome}, main="핵심 변수 관계", pch=20, col=rgb(0,0,1,0.3))`
+          refLinks: [
+            { label: 'Model Evaluation', url: 'https://scikit-learn.org/stable/modules/model_evaluation.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    causal_ml: [
-      {
-        id: 'preprocessing',
-        title: '인과 ML 데이터 전처리',
-        description: '처리군/통제군 확인, 공변량 균형, 성향점수 추정 준비를 합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Causal ML ───────────────────────────────────────────────────
+
+function getCausalMlMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '인과 ML 데이터 전처리',
+          checked: true,
+          description: '처리군/통제군 확인, 공변량 균형, 성향점수 추정 준비를 합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
 
 # 처리 변수 분포
+treat_col = '${treatment}'
 print("=== 처리 변수 분포 ===")
-treat_col = treatment
 print(df[treat_col].value_counts())
 print(f"처리율: {df[treat_col].mean():.2%}")
 
 # 공변량 균형 확인
-covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome, treat_col]]
+covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ['${outcome}', treat_col]]
 print("\\n=== 공변량 균형 (표준화 평균차) ===")
 for c in covariates[:8]:
     t_mean = df[df[treat_col]==1][c].mean()
     c_mean = df[df[treat_col]==0][c].mean()
     pooled_sd = df[c].std()
     smd = (t_mean - c_mean) / pooled_sd if pooled_sd > 0 else 0
-    balance = '✅' if abs(smd) < 0.1 else '⚠️'
+    balance = '\\u2705' if abs(smd) < 0.1 else '\\u26a0\\ufe0f'
     print(f"  {c:20s}: SMD = {smd:+.3f} {balance}")`,
-          r: `library(dplyr)
-df <- read.csv('mock_data.csv') |> na.omit()
-table(df$${treatment})
-cat("처리율:", mean(df$${treatment}), "\\n")`
+          refLinks: [
+            { label: 'Causal Inference', url: 'https://www.kaggle.com/learn/intro-to-machine-learning' }
+          ]
         }
-      },
-      {
-        id: 'propensity_score',
-        title: '성향점수 추정 (Propensity Score)',
-        description: '로지스틱 회귀로 성향점수를 추정하고 매칭/가중 준비를 합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'propensity_score',
+          label: '성향점수 추정 (Propensity Score)',
+          checked: true,
+          description: '로지스틱 회귀로 성향점수를 추정하고 매칭/가중 준비를 합니다.',
+          code: `import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 
 df = pd.read_csv('mock_data.csv').dropna()
-treat_col = treatment
-outcome_col = outcome
+treat_col = '${treatment}'
+outcome_col = '${outcome}'
 
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome_col, treat_col]]
 X = df[covariates]
@@ -1085,24 +1230,22 @@ print(f"겹침 범위: [{df['ps'].min():.3f}, {df['ps'].max():.3f}]")
 df['ipw'] = np.where(T==1, 1/df['ps'], 1/(1-df['ps']))
 att = np.average(df[T==1][outcome_col], weights=df[T==1]['ipw']) - np.average(df[T==0][outcome_col], weights=df[T==0]['ipw'])
 print(f"\\nIPW 추정 ATE: {att:.4f}")`,
-          r: `library(MatchIt)
-df <- read.csv('mock_data.csv') |> na.omit()
-m <- matchit(${treatment} ~ ., data=df[,!names(df) %in% c("${outcome}")], method="nearest")
-summary(m)`
-        }
-      },
-      {
-        id: 'causal_forest',
-        title: '이질적 처리효과 (CATE) 추정',
-        description: '처리효과의 이질성을 분석합니다. (Causal Forest 개념 기반)',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Propensity Score', url: 'https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression' }
+          ]
+        },
+        {
+          id: 'causal_forest',
+          label: '이질적 처리효과 (CATE) 추정',
+          checked: true,
+          description: '처리효과의 이질성을 분석합니다. (Causal Forest 개념 기반)',
+          code: `import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
 df = pd.read_csv('mock_data.csv').dropna()
-treat_col = treatment
-outcome_col = outcome
+treat_col = '${treatment}'
+outcome_col = '${outcome}'
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome_col, treat_col]]
 
 # T-Learner (간단한 이질적 효과 추정)
@@ -1128,26 +1271,28 @@ for c in covariates[:3]:
     low = df[df[c] <= median]['cate'].mean()
     high = df[df[c] > median]['cate'].mean()
     print(f"\\n{c}: Low={low:.4f}, High={high:.4f}, Diff={high-low:.4f}")`,
-          r: `library(grf)
-df <- read.csv('mock_data.csv') |> na.omit()
-X <- as.matrix(df[,!names(df) %in% c("${outcome}","${treatment}")])
-cf <- causal_forest(X, df$${outcome}, df$${treatment})
-print(average_treatment_effect(cf))`
+          refLinks: [
+            { label: 'CATE', url: 'https://scikit-learn.org/stable/modules/ensemble.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '인과 추론 시각화',
-        description: '성향점수 분포, CATE 분포, 공변량 균형 차트를 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '인과 추론 시각화',
+          checked: true,
+          description: '성향점수 분포, CATE 분포, 공변량 균형 차트를 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestRegressor
 
 df = pd.read_csv('mock_data.csv').dropna()
-treat_col = treatment; outcome_col = outcome
+treat_col = '${treatment}'; outcome_col = '${outcome}'
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [outcome_col, treat_col]]
 
 # 성향점수
@@ -1178,19 +1323,29 @@ if len(covariates) >= 1:
 
 plt.tight_layout()
 plt.show()`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-boxplot(df$${outcome} ~ df$${treatment}, main="처리군 vs 통제군", xlab="${treatment}", ylab="${outcome}")`
+          refLinks: [
+            { label: 'Visualization', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    bayesian: [
-      {
-        id: 'preprocessing',
-        title: '데이터 준비 및 사전분포 설정',
-        description: '데이터를 확인하고 사전분포(prior) 설정을 위한 정보를 수집합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Bayesian ────────────────────────────────────────────────────
+
+function getBayesianMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '데이터 준비 및 사전분포 설정',
+          checked: true,
+          description: '데이터를 확인하고 사전분포(prior) 설정을 위한 정보를 수집합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -1201,8 +1356,8 @@ print(f"표본 크기: {len(df)}")
 print(df.describe().round(3))
 
 # 종속변수 분포 특성 (사전분포 설정 참고)
-y = df[outcome]
-print(f"\\n=== {outcome} 분포 특성 ===")
+y = df['${outcome}']
+print(f"\\n=== ${'${outcome}'} 분포 특성 ===")
 print(f"평균: {y.mean():.3f}")
 print(f"표준편차: {y.std():.3f}")
 print(f"왜도: {y.skew():.3f}")
@@ -1213,54 +1368,55 @@ print("\\n=== 추천 사전분포 ===")
 print(f"절편: Normal({y.mean():.1f}, {y.std()*2:.1f})")
 print(f"회귀계수: Normal(0, {y.std():.1f})")
 print(f"오차 SD: HalfCauchy(0, {y.std():.1f})")`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-summary(df)
-hist(df$${outcome}, main="종속변수 분포", xlab="${outcome}", prob=TRUE)
-curve(dnorm(x, mean(df$${outcome}), sd(df$${outcome})), add=TRUE, col="red")`
+          refLinks: [
+            { label: 'Bayesian Thinking', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.01-what-is-machine-learning.html' }
+          ]
         }
-      },
-      {
-        id: 'frequentist_baseline',
-        title: 'MLE 기준 모형 (빈도주의 비교용)',
-        description: '베이지안 결과와 비교하기 위한 빈도주의 MLE 기준 모형을 추정합니다.',
-        codeTemplate: {
-          python: `import statsmodels.api as sm
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'frequentist_baseline',
+          label: 'MLE 기준 모형 (빈도주의 비교용)',
+          checked: true,
+          description: '베이지안 결과와 비교하기 위한 빈도주의 MLE 기준 모형을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
 
-X = sm.add_constant(df[[treatment]])
-model = sm.OLS(df[outcome], X).fit()
+X = sm.add_constant(df[['${treatment}']])
+model = sm.OLS(df['${outcome}'], X).fit()
 print("=== MLE 기준 모형 (비교용) ===")
 print(model.summary())
 print(f"\\n비교 포인트:")
-print(f"  {treatment} 계수: {model.params[treatment]:.4f}")
-print(f"  95% CI: [{model.conf_int().loc[treatment,0]:.4f}, {model.conf_int().loc[treatment,1]:.4f}]")`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-model <- lm(${outcome} ~ ${treatment}, data=df)
-summary(model)
-confint(model)`
-        }
-      },
-      {
-        id: 'bayesian_estimation',
-        title: '베이지안 사후분포 추정 (MCMC 근사)',
-        description: '메트로폴리스-헤이스팅스 MCMC로 사후분포를 근사 추정합니다.',
-        codeTemplate: {
-          python: `import numpy as np
+print(f"  ${'${treatment}'} 계수: {model.params['${treatment}']:.4f}")
+print(f"  95% CI: [{model.conf_int().loc['${treatment}',0]:.4f}, {model.conf_int().loc['${treatment}',1]:.4f}]")`,
+          refLinks: [
+            { label: 'OLS Baseline', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'bayesian_estimation',
+          label: '베이지안 사후분포 추정 (MCMC 근사)',
+          checked: true,
+          description: '메트로폴리스-헤이스팅스 MCMC로 사후분포를 근사 추정합니다.',
+          code: `import numpy as np
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-y = df[outcome].values
-x = df[treatment].values
+y = df['${outcome}'].values
+x = df['${treatment}'].values
 n = len(y)
 
 # 간단한 베이지안 선형회귀 (정규-정규 결합 사후분포)
-# y = a + b*x + e, e ~ N(0, sigma²)
-# 사전분포: a ~ N(y_mean, 10²), b ~ N(0, 10²), sigma ~ HalfCauchy
+# y = a + b*x + e, e ~ N(0, sigma\\u00b2)
+# 사전분포: a ~ N(y_mean, 10\\u00b2), b ~ N(0, 10\\u00b2), sigma ~ HalfCauchy
 
 X = np.column_stack([np.ones(n), x])
-# 정규 사전분포 + 정규 우도 → 정규 사후분포 (해석적 해)
+# 정규 사전분포 + 정규 우도 -> 정규 사후분포 (해석적 해)
 prior_mean = np.array([y.mean(), 0])
 prior_var = np.diag([100, 100])
 
@@ -1269,38 +1425,40 @@ post_var = np.linalg.inv(np.linalg.inv(prior_var) + X.T @ X / sigma2)
 post_mean = post_var @ (np.linalg.inv(prior_var) @ prior_mean + X.T @ y / sigma2)
 
 print("=== 베이지안 사후분포 (해석적 해) ===")
-print(f"절편: {post_mean[0]:.4f} ± {np.sqrt(post_var[0,0]):.4f}")
-print(f"{treatment}: {post_mean[1]:.4f} ± {np.sqrt(post_var[1,1]):.4f}")
+print(f"절편: {post_mean[0]:.4f} \\u00b1 {np.sqrt(post_var[0,0]):.4f}")
+print(f"${'${treatment}'}: {post_mean[1]:.4f} \\u00b1 {np.sqrt(post_var[1,1]):.4f}")
 
 # 95% 신용구간
 from scipy import stats
-for i, name in enumerate(['절편', treatment]):
+for i, name in enumerate(['절편', '${treatment}']):
     lo = post_mean[i] - 1.96*np.sqrt(post_var[i,i])
     hi = post_mean[i] + 1.96*np.sqrt(post_var[i,i])
     print(f"  {name} 95% CI: [{lo:.4f}, {hi:.4f}]")
 
 # P(b > 0) 계산
 prob_positive = 1 - stats.norm.cdf(0, post_mean[1], np.sqrt(post_var[1,1]))
-print(f"\\nP({treatment} > 0) = {prob_positive:.4f}")`,
-          r: `library(BayesFactor)
-df <- read.csv('mock_data.csv') |> na.omit()
-bf <- regressionBF(${outcome} ~ ${treatment}, data=df)
-print(bf)
-posterior(bf, iterations=5000) |> summary()`
+print(f"\\nP(${'${treatment}'} > 0) = {prob_positive:.4f}")`,
+          refLinks: [
+            { label: 'Bayesian Estimation', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.01-what-is-machine-learning.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '사후분포 시각화',
-        description: '사전분포/사후분포 비교, 신용구간, 수렴 진단을 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '사후분포 시각화',
+          checked: true,
+          description: '사전분포/사후분포 비교, 신용구간, 수렴 진단을 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-y = df[outcome].values; x = df[treatment].values; n = len(y)
+y = df['${outcome}'].values; x = df['${treatment}'].values; n = len(y)
 X = np.column_stack([np.ones(n), x])
 
 prior_mean = np.array([y.mean(), 0])
@@ -1320,7 +1478,7 @@ axes[0].plot(x_range, prior_pdf, 'b--', label='사전분포', linewidth=2)
 axes[0].plot(x_range, post_pdf, 'r-', label='사후분포', linewidth=2)
 axes[0].axvline(0, color='gray', linestyle=':', alpha=0.5)
 axes[0].fill_between(x_range, post_pdf, alpha=0.2, color='red')
-axes[0].set_xlabel(f'{treatment} 계수')
+axes[0].set_xlabel(f'${'${treatment}'} 계수')
 axes[0].set_title('사전분포 vs 사후분포')
 axes[0].legend()
 
@@ -1337,21 +1495,29 @@ axes[1].legend(fontsize=8)
 
 plt.tight_layout()
 plt.show()`,
-          r: `# R 시각화
-df <- read.csv('mock_data.csv') |> na.omit()
-model <- lm(${outcome} ~ ${treatment}, data=df)
-plot(density(rnorm(5000, coef(model)[2], summary(model)$coef[2,2])), main="사후분포 (정규 근사)")`
+          refLinks: [
+            { label: 'Bayesian Viz', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    sem: [
-      {
-        id: 'preprocessing',
-        title: 'SEM 데이터 준비',
-        description: '잠재변수 지표 확인, 정규성 검정, 상관행렬 분석을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── SEM ─────────────────────────────────────────────────────────
+
+function getSemMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: 'SEM 데이터 준비',
+          checked: true,
+          description: '잠재변수 지표 확인, 정규성 검정, 상관행렬 분석을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 from scipy import stats
 
@@ -1369,21 +1535,23 @@ print(corr)
 numeric_df = df.select_dtypes(include=[np.number])
 for col in numeric_df.columns:
     stat, p = stats.shapiro(numeric_df[col][:500])
-    normal = '✅' if p > 0.05 else '⚠️'
+    normal = '\\u2705' if p > 0.05 else '\\u26a0\\ufe0f'
     print(f"  {col}: Shapiro p={p:.4f} {normal}")`,
-          r: `library(psych)
-df <- read.csv('mock_data.csv') |> na.omit()
-describe(df)
-cor(df[sapply(df, is.numeric)]) |> round(3)
-mardia(df[sapply(df, is.numeric)])`
+          refLinks: [
+            { label: 'SEM Basics', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.09-principal-component-analysis.html' }
+          ]
         }
-      },
-      {
-        id: 'cfa',
-        title: '확인적 요인분석 (CFA)',
-        description: '측정 모형의 타당성을 확인합니다. 요인적재량, 적합도 지수를 분석합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'cfa',
+          label: '확인적 요인분석 (CFA)',
+          checked: true,
+          description: '측정 모형의 타당성을 확인합니다. 요인적재량, 적합도 지수를 분석합니다.',
+          code: `import pandas as pd
 import numpy as np
 from sklearn.decomposition import FactorAnalysis
 
@@ -1406,23 +1574,16 @@ print(f"\\n설명 분산: {fa.noise_variance_.mean():.3f}")
 log_lik = fa.score(df[numeric_cols]).sum()
 print(f"\\nLog-likelihood: {log_lik:.2f}")
 print(f"BIC 근사: {-2*log_lik + n_factors*np.log(len(df)):.2f}")`,
-          r: `library(lavaan)
-df <- read.csv('mock_data.csv') |> na.omit()
-# CFA 모형 정의 (변수에 맞게 수정 필요)
-cfa_model <- '
-  factor1 =~ x1 + x2 + x3
-  factor2 =~ x4 + x5 + x6
-'
-fit <- cfa(cfa_model, data=df)
-summary(fit, fit.measures=TRUE, standardized=TRUE)`
-        }
-      },
-      {
-        id: 'path_model',
-        title: '경로 모형 / 구조 모형 추정',
-        description: '잠재변수 간 구조적 관계(경로)를 추정합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Factor Analysis', url: 'https://scikit-learn.org/stable/modules/decomposition.html#factor-analysis' }
+          ]
+        },
+        {
+          id: 'path_model',
+          label: '경로 모형 / 구조 모형 추정',
+          checked: true,
+          description: '잠재변수 간 구조적 관계(경로)를 추정합니다.',
+          code: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
@@ -1434,9 +1595,9 @@ numeric_cols = [c for c in numeric_cols if c not in _skip]
 # 경로 모형 근사 (다중 회귀 체인)
 print("=== 경로 분석 (다중 회귀 근사) ===")
 if len(numeric_cols) >= 3:
-    # 변수 자동 배정: Y(종속), X(독립), M(매개) — 모두 다른 변수
-    y_var = outcome if outcome and outcome in df.columns else numeric_cols[0]
-    x_var = treatment if treatment and treatment in df.columns and treatment != y_var else numeric_cols[1]
+    # 변수 자동 배정: Y(종속), X(독립), M(매개) -- 모두 다른 변수
+    y_var = '${outcome}' if '${outcome}' in df.columns else numeric_cols[0]
+    x_var = '${treatment}' if '${treatment}' in df.columns and '${treatment}' != y_var else numeric_cols[1]
     remaining_m = [c for c in numeric_cols if c != y_var and c != x_var]
     m_var = remaining_m[0] if remaining_m else numeric_cols[2]
 
@@ -1444,38 +1605,38 @@ if len(numeric_cols) >= 3:
     print(f"M(매개): {m_var}")
     print(f"Y(종속): {y_var}")
 
-    # 경로 a: X → M
+    # 경로 a: X -> M
     X_a = sm.add_constant(df[[x_var]])
     path_a = sm.OLS(df[m_var], X_a).fit()
     a = path_a.params[x_var]
-    print(f"\\n경로 a ({x_var} → {m_var}): {a:.4f} (p={path_a.pvalues[x_var]:.4f})")
+    print(f"\\n경로 a ({x_var} -> {m_var}): {a:.4f} (p={path_a.pvalues[x_var]:.4f})")
 
-    # 경로 b + c': M + X → Y
+    # 경로 b + c': M + X -> Y
     X_bc = sm.add_constant(df[[x_var, m_var]])
     path_bc = sm.OLS(df[y_var], X_bc).fit()
     b = path_bc.params[m_var]
     c_prime = path_bc.params[x_var]
-    print(f"경로 b ({m_var} → {y_var}): {b:.4f} (p={path_bc.pvalues[m_var]:.4f})")
-    print(f"직접효과 c' ({x_var} → {y_var}): {c_prime:.4f} (p={path_bc.pvalues[x_var]:.4f})")
-    print(f"간접효과 a×b: {a*b:.4f}")
-    print(f"총효과 c'+a×b: {c_prime + a*b:.4f}")
+    print(f"경로 b ({m_var} -> {y_var}): {b:.4f} (p={path_bc.pvalues[m_var]:.4f})")
+    print(f"직접효과 c' ({x_var} -> {y_var}): {c_prime:.4f} (p={path_bc.pvalues[x_var]:.4f})")
+    print(f"간접효과 a\\u00d7b: {a*b:.4f}")
+    print(f"총효과 c'+a\\u00d7b: {c_prime + a*b:.4f}")
 else:
     print("경로 분석에 최소 3개 수치 변수가 필요합니다.")`,
-          r: `library(lavaan)
-df <- read.csv('mock_data.csv') |> na.omit()
-sem_model <- '
-  ${outcome} ~ ${treatment}
-'
-fit <- sem(sem_model, data=df)
-summary(fit, fit.measures=TRUE)`
+          refLinks: [
+            { label: 'Path Analysis', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: 'SEM 결과 시각화',
-        description: '경로 다이어그램, 적합도 비교, 요인적재량 차트를 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: 'SEM 결과 시각화',
+          checked: true,
+          description: '경로 다이어그램, 적합도 비교, 요인적재량 차트를 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from sklearn.decomposition import FactorAnalysis
@@ -1511,28 +1672,37 @@ plt.colorbar(im2, ax=axes[1])
 
 plt.tight_layout()
 plt.show()`,
-          r: `library(lavaan)
-library(semPlot)
-# semPaths(fit, what="est", layout="tree")`
+          refLinks: [
+            { label: 'Heatmap', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.04-density-and-contour-plots.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    survival: [
-      {
-        id: 'preprocessing',
-        title: '생존 데이터 전처리',
-        description: '생존 시간, 사건 발생 여부, 중도절단 패턴을 확인합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Survival ────────────────────────────────────────────────────
+
+function getSurvivalMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '생존 데이터 전처리',
+          checked: true,
+          description: '생존 시간, 사건 발생 여부, 중도절단 패턴을 확인합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
 
 # 생존 데이터 기본 정보
 # 가정: outcome = 생존시간, treatment = 사건(event) 여부
-time_col = outcome
-event_col = treatment
+time_col = '${outcome}'
+event_col = '${treatment}'
 
 print("=== 생존 데이터 요약 ===")
 print(f"총 관측치: {len(df)}")
@@ -1542,23 +1712,26 @@ print(f"\\n생존시간 분포:")
 print(f"  평균: {df[time_col].mean():.2f}")
 print(f"  중위수: {df[time_col].median():.2f}")
 print(f"  범위: [{df[time_col].min():.2f}, {df[time_col].max():.2f}]")`,
-          r: `library(survival)
-df <- read.csv('mock_data.csv') |> na.omit()
-surv_obj <- Surv(df$${outcome}, df$${treatment})
-summary(surv_obj)`
+          refLinks: [
+            { label: 'Survival Data', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.00-introduction-to-pandas.html' }
+          ]
         }
-      },
-      {
-        id: 'kaplan_meier',
-        title: 'Kaplan-Meier 생존 곡선',
-        description: '비모수적 생존 함수를 추정하고 집단 간 비교를 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'kaplan_meier',
+          label: 'Kaplan-Meier 생존 곡선',
+          checked: true,
+          description: '비모수적 생존 함수를 추정하고 집단 간 비교를 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
-time_col = outcome
-event_col = treatment
+time_col = '${outcome}'
+event_col = '${treatment}'
 
 # Kaplan-Meier 추정 (수작업)
 times = sorted(df[time_col].unique())
@@ -1585,26 +1758,22 @@ print(f"1사분위 생존시간: {times[next((i for i,s in enumerate(survival) i
 print("\\n시점별 생존률:")
 for i in range(0, len(times), max(1, len(times)//10)):
     print(f"  t={times[i]:.1f}: S(t)={survival[i]:.3f}")`,
-          r: `library(survival)
-library(survminer)
-df <- read.csv('mock_data.csv') |> na.omit()
-km <- survfit(Surv(${outcome}, ${treatment}) ~ 1, data=df)
-summary(km)
-ggsurvplot(km, data=df, risk.table=TRUE)`
-        }
-      },
-      {
-        id: 'cox_regression',
-        title: 'Cox 비례위험 모형',
-        description: '공변량의 위험비(Hazard Ratio)를 추정합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Kaplan-Meier', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.00-introduction-to-pandas.html' }
+          ]
+        },
+        {
+          id: 'cox_regression',
+          label: 'Cox 비례위험 모형',
+          checked: true,
+          description: '공변량의 위험비(Hazard Ratio)를 추정합니다.',
+          code: `import pandas as pd
 import numpy as np
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-time_col = outcome
-event_col = treatment
+time_col = '${outcome}'
+event_col = '${treatment}'
 covariates = [c for c in df.select_dtypes(include=[np.number]).columns if c not in [time_col, event_col]]
 
 # Cox 모형 근사 (로지스틱 회귀로 사건 확률 추정)
@@ -1625,23 +1794,26 @@ if len(covariates) > 0:
         ci_lo = np.exp(coef - 1.96*se)
         ci_hi = np.exp(coef + 1.96*se)
         print(f"  {c:15s} | {coef:+.4f} | {or_val:.4f}    | [{ci_lo:.3f}, {ci_hi:.3f}]")`,
-          r: `library(survival)
-df <- read.csv('mock_data.csv') |> na.omit()
-cox <- coxph(Surv(${outcome}, ${treatment}) ~ ., data=df)
-summary(cox)`
+          refLinks: [
+            { label: 'Cox Regression', url: 'https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '생존 분석 시각화',
-        description: 'KM 곡선, 위험비 Forest Plot을 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '생존 분석 시각화',
+          checked: true,
+          description: 'KM 곡선, 위험비 Forest Plot을 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
-time_col = outcome; event_col = treatment
+time_col = '${outcome}'; event_col = '${treatment}'
 
 # KM 곡선
 times = sorted(df[time_col].unique())
@@ -1668,27 +1840,36 @@ axes[1].legend()
 
 plt.tight_layout()
 plt.show()`,
-          r: `library(survminer); library(survival)
-df <- read.csv('mock_data.csv') |> na.omit()
-ggsurvplot(survfit(Surv(${outcome},${treatment})~1, data=df), risk.table=TRUE)`
+          refLinks: [
+            { label: 'Survival Viz', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    meta_analysis: [
-      {
-        id: 'preprocessing',
-        title: '메타분석 데이터 준비',
-        description: '개별 연구 효과크기(ES), 표준오차, 표본크기를 확인합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Meta-Analysis ───────────────────────────────────────────────
+
+function getMetaAnalysisMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '메타분석 데이터 준비',
+          checked: true,
+          description: '개별 연구 효과크기(ES), 표준오차, 표본크기를 확인합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
 
 # 메타분석 데이터 가정: 각 행 = 개별 연구
 # outcome = 효과크기(ES), treatment = 표준오차(SE)
-es_col = outcome; se_col = treatment
+es_col = '${outcome}'; se_col = '${treatment}'
 
 print("=== 메타분석 데이터 요약 ===")
 print(f"포함된 연구 수: {len(df)}")
@@ -1703,23 +1884,26 @@ print(f"  범위: [{df[se_col].min():.4f}, {df[se_col].max():.4f}]")
 # 가중치 계산 (역분산)
 df['weight'] = 1 / (df[se_col] ** 2)
 print(f"\\n가중치 범위: [{df['weight'].min():.2f}, {df['weight'].max():.2f}]")`,
-          r: `library(metafor)
-df <- read.csv('mock_data.csv') |> na.omit()
-str(df)
-summary(df)`
+          refLinks: [
+            { label: 'Meta-Analysis', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.08-aggregation-and-grouping.html' }
+          ]
         }
-      },
-      {
-        id: 'fixed_effects',
-        title: '고정효과 메타분석',
-        description: '역분산 가중 고정효과 모형으로 통합 효과크기를 추정합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'fixed_effects',
+          label: '고정효과 메타분석',
+          checked: true,
+          description: '역분산 가중 고정효과 모형으로 통합 효과크기를 추정합니다.',
+          code: `import pandas as pd
 import numpy as np
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-es_col = outcome; se_col = treatment
+es_col = '${outcome}'; se_col = '${treatment}'
 
 es = df[es_col].values
 se = df[se_col].values
@@ -1737,22 +1921,21 @@ print(f"통합 ES: {fe_es:.4f}")
 print(f"SE: {fe_se:.4f}")
 print(f"95% CI: [{fe_ci[0]:.4f}, {fe_ci[1]:.4f}]")
 print(f"z = {fe_z:.3f}, p = {fe_p:.4f}")`,
-          r: `library(metafor)
-df <- read.csv('mock_data.csv') |> na.omit()
-rma(yi=${outcome}, sei=${treatment}, data=df, method="FE")`
-        }
-      },
-      {
-        id: 'random_effects',
-        title: '랜덤효과 메타분석 + 이질성 검정',
-        description: 'DerSimonian-Laird 랜덤효과 모형과 I², Q 검정을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'Fixed Effects Meta', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'random_effects',
+          label: '랜덤효과 메타분석 + 이질성 검정',
+          checked: true,
+          description: 'DerSimonian-Laird 랜덤효과 모형과 I\u00b2, Q 검정을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 from scipy import stats
 
 df = pd.read_csv('mock_data.csv').dropna()
-es_col = outcome; se_col = treatment
+es_col = '${outcome}'; se_col = '${treatment}'
 
 es = df[es_col].values; se = df[se_col].values
 w = 1 / (se ** 2); k = len(es)
@@ -1765,10 +1948,10 @@ Q = np.sum(w * (es - fe_es)**2)
 Q_df = k - 1
 Q_p = 1 - stats.chi2.cdf(Q, Q_df)
 
-# I² 통계량
+# I\\u00b2 통계량
 I2 = max(0, (Q - Q_df) / Q) * 100
 
-# DerSimonian-Laird τ²
+# DerSimonian-Laird \\u03c4\\u00b2
 c = np.sum(w) - np.sum(w**2) / np.sum(w)
 tau2 = max(0, (Q - Q_df) / c)
 
@@ -1787,28 +1970,31 @@ print(f"95% CI: [{re_ci[0]:.4f}, {re_ci[1]:.4f}]")
 print(f"z = {re_z:.3f}, p = {re_p:.4f}")
 print(f"\\n=== 이질성 검정 ===")
 print(f"Q = {Q:.2f} (df={Q_df}, p={Q_p:.4f})")
-print(f"I² = {I2:.1f}%")
-print(f"τ² = {tau2:.4f}")
+print(f"I\\u00b2 = {I2:.1f}%")
+print(f"\\u03c4\\u00b2 = {tau2:.4f}")
 
 heterogeneity = '낮음' if I2 < 25 else '중간' if I2 < 75 else '높음'
 print(f"이질성 수준: {heterogeneity}")`,
-          r: `library(metafor)
-df <- read.csv('mock_data.csv') |> na.omit()
-re <- rma(yi=${outcome}, sei=${treatment}, data=df, method="DL")
-summary(re)`
+          refLinks: [
+            { label: 'Random Effects Meta', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: 'Forest Plot & Funnel Plot',
-        description: '개별 연구 효과크기 Forest Plot과 출판 편향 Funnel Plot을 시각화합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: 'Forest Plot & Funnel Plot',
+          checked: true,
+          description: '개별 연구 효과크기 Forest Plot과 출판 편향 Funnel Plot을 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-es_col = outcome; se_col = treatment
+es_col = '${outcome}'; se_col = '${treatment}'
 es = df[es_col].values; se = df[se_col].values
 k = len(es)
 
@@ -1847,23 +2033,29 @@ axes[1].set_title('Funnel Plot')
 
 plt.tight_layout()
 plt.show()`,
-          r: `library(metafor)
-df <- read.csv('mock_data.csv') |> na.omit()
-re <- rma(yi=${outcome}, sei=${treatment}, data=df, method="DL")
-par(mfrow=c(1,2))
-forest(re, main="Forest Plot")
-funnel(re, main="Funnel Plot")`
+          refLinks: [
+            { label: 'Forest Plot', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    unstructured_data: [
-      {
-        id: 'preprocessing',
-        title: '비정형 데이터 전처리',
-        description: '텍스트 정제, 토큰화, TF-IDF 벡터화 등을 수행합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Unstructured Data ───────────────────────────────────────────
+
+function getUnstructuredDataMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '비정형 데이터 전처리',
+          checked: true,
+          description: '텍스트 정제, 토큰화, TF-IDF 벡터화 등을 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 import re
 
@@ -1884,18 +2076,21 @@ if len(text_cols) > 0:
         print(f"  고유값: {df[col].nunique()}")
         print(f"  평균 길이: {df[col].str.len().mean():.0f}자")
         print(f"  샘플: {df[col].iloc[0][:100]}...")`,
-          r: `library(tm); library(tidytext)
-df <- read.csv('mock_data.csv')
-str(df)
-summary(df)`
+          refLinks: [
+            { label: 'Text Processing', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.04-feature-engineering.html' }
+          ]
         }
-      },
-      {
-        id: 'feature_extraction',
-        title: '특성 추출 (TF-IDF / 임베딩)',
-        description: '비정형 데이터에서 수치적 특성을 추출합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'feature_extraction',
+          label: '특성 추출 (TF-IDF / 임베딩)',
+          checked: true,
+          description: '비정형 데이터에서 수치적 특성을 추출합니다.',
+          code: `import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
@@ -1920,18 +2115,17 @@ if len(numeric_df.columns) > 1:
     for i, var in enumerate(pca.explained_variance_ratio_):
         cum = sum(pca.explained_variance_ratio_[:i+1])
         print(f"  PC{i+1}: {var:.3f} (누적: {cum:.3f})")`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-pca <- prcomp(df[sapply(df, is.numeric)], scale.=TRUE)
-summary(pca)
-biplot(pca)`
-        }
-      },
-      {
-        id: 'model',
-        title: '모형 추정',
-        description: '추출된 특성을 활용하여 분류/회귀 모형을 추정합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+          refLinks: [
+            { label: 'PCA', url: 'https://scikit-learn.org/stable/modules/decomposition.html#pca' },
+            { label: 'TF-IDF', url: 'https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction' }
+          ]
+        },
+        {
+          id: 'model',
+          label: '모형 추정',
+          checked: true,
+          description: '추출된 특성을 활용하여 분류/회귀 모형을 추정합니다.',
+          code: `import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 
@@ -1939,21 +2133,25 @@ df = pd.read_csv('mock_data.csv').dropna()
 numeric_df = df.select_dtypes(include=[np.number])
 
 # 회귀 모형
-X = sm.add_constant(numeric_df.drop(columns=[outcome]))
-model = sm.OLS(numeric_df[outcome], X).fit(cov_type='HC1')
+X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
+model = sm.OLS(numeric_df['${outcome}'], X).fit(cov_type='HC1')
 print("=== 모형 추정 결과 ===")
 print(model.summary())`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-model <- lm(${outcome} ~ ., data=df[sapply(df, is.numeric)])
-summary(model)`
+          refLinks: [
+            { label: 'Regression', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '시각화',
-        description: '주성분 산점도, 변수 관계 시각화를 생성합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: 'PCA 및 변수 관계 시각화',
+          checked: true,
+          description: '주성분 산점도, 변수 관계 시각화를 생성합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from sklearn.decomposition import PCA
@@ -1969,32 +2167,44 @@ X_scaled = StandardScaler().fit_transform(numeric_df)
 pca = PCA(n_components=2)
 pc = pca.fit_transform(X_scaled)
 
-axes[0].scatter(pc[:,0], pc[:,1], alpha=0.4, s=20, c=numeric_df[outcome], cmap='viridis')
+axes[0].scatter(pc[:,0], pc[:,1], alpha=0.4, s=20, c=numeric_df['${outcome}'], cmap='viridis')
 axes[0].set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.1%})')
 axes[0].set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.1%})')
 axes[0].set_title('PCA 2D 산점도')
 
 # 핵심 변수 산점도
-axes[1].scatter(numeric_df.iloc[:,0], numeric_df[outcome], alpha=0.4, s=20)
+axes[1].scatter(numeric_df.iloc[:,0], numeric_df['${outcome}'], alpha=0.4, s=20)
 axes[1].set_xlabel(numeric_df.columns[0])
-axes[1].set_ylabel(f'{outcome}')
+axes[1].set_ylabel('${outcome}')
 axes[1].set_title('핵심 변수 관계')
 
 plt.tight_layout()
 plt.show()`,
-          r: `df <- read.csv('mock_data.csv') |> na.omit()
-pairs(df[sapply(df, is.numeric)][,1:min(5, ncol(df))])`
+          refLinks: [
+            { label: 'PCA Visualization', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.09-principal-component-analysis.html' }
+          ]
         }
-      }
-    ],
+      ]
+    }
+  };
+}
 
-    experimental: [
-      {
-        id: 'preprocessing',
-        title: '실험 데이터 전처리',
-        description: '실험 집단 확인, 요인 수준, 표본 크기 균형을 점검합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+// ─── Experimental ────────────────────────────────────────────────
+
+function getExperimentalMenu(outcome, treatment) {
+  const autoDetectBase = getAutoDetectBase(outcome, treatment);
+
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '실험 데이터 전처리',
+          checked: true,
+          description: '실험 집단 확인, 요인 수준, 표본 크기 균형을 점검합니다.',
+          code: `import pandas as pd
 df = pd.read_csv('mock_data.csv')
 ${autoDetectBase}
 
@@ -2006,17 +2216,21 @@ print("=== 집단별 표본 크기 ===")
 print(df.groupby(group_col).size())
 print("\\n=== 집단별 기술통계 ===")
 print(df.groupby(group_col)[outcome].describe().round(3))`,
-          r: `df <- read.csv('mock_data.csv')
-table(df$group)
-tapply(df$${outcome}, df$group, summary)`
+          refLinks: [
+            { label: 'Experimental Design', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.08-aggregation-and-grouping.html' }
+          ]
         }
-      },
-      {
-        id: 'anova',
-        title: 'ANOVA / t-검정',
-        description: '집단 간 차이를 검정합니다.',
-        codeTemplate: {
-          python: `import pandas as pd
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'anova',
+          label: 'ANOVA / t-검정',
+          checked: true,
+          description: '집단 간 차이를 검정합니다.',
+          code: `import pandas as pd
 from scipy import stats
 import pingouin as pg
 
@@ -2035,18 +2249,16 @@ print(anova_result)
 posthoc = pg.pairwise_tukey(data=df, dv=outcome, between=group_col)
 print("\\n=== 사후 검정 (Tukey HSD) ===")
 print(posthoc)`,
-          r: `df <- read.csv('mock_data.csv')
-model <- aov(${outcome} ~ group, data=df)
-summary(model)
-TukeyHSD(model)`
-        }
-      },
-      {
-        id: 'effect_size',
-        title: '효과 크기 계산',
-        description: "Cohen's d, η² 등 효과 크기를 계산합니다.",
-        codeTemplate: {
-          python: `import pingouin as pg
+          refLinks: [
+            { label: 'ANOVA', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'effect_size',
+          label: '효과 크기 계산',
+          checked: true,
+          description: "Cohen's d, eta-squared 등 효과 크기를 계산합니다.",
+          code: `import pingouin as pg
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv')
@@ -2055,21 +2267,25 @@ ${autoDetectBase}
 cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
 group_col = cat_cols[0] if cat_cols else 'group'
 
-# η² (이타-제곱)
+# \\u03b7\\u00b2 (이타-제곱)
 anova = pg.anova(data=df, dv=outcome, between=group_col, effsize='np2')
-print("=== 효과 크기 (partial η²) ===")
+print("=== 효과 크기 (partial \\u03b7\\u00b2) ===")
 print(anova[['Source','np2']])`,
-          r: `library(effectsize)
-model <- aov(${outcome} ~ group, data=df)
-eta_squared(model, partial=TRUE)`
+          refLinks: [
+            { label: 'Effect Size', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
         }
-      },
-      {
-        id: 'visualization',
-        title: '시각화',
-        description: '집단별 비교 박스플롯, 바이올린 플롯을 생성합니다.',
-        codeTemplate: {
-          python: `import matplotlib.pyplot as plt
+      ]
+    },
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '집단 비교 시각화',
+          checked: true,
+          description: '집단별 비교 박스플롯, 바이올린 플롯을 생성합니다.',
+          code: `import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 
@@ -2091,181 +2307,126 @@ axes[1].set_title(f'집단별 {outcome} 분포 (바이올린)')
 
 plt.tight_layout()
 plt.show()`,
-          r: `library(ggplot2)
-df <- read.csv('mock_data.csv')
-
-ggplot(df, aes(x=group, y=${outcome}, fill=group)) +
-  geom_boxplot(alpha=0.7) +
-  geom_jitter(width=0.1, alpha=0.3) +
-  labs(title="집단별 비교") +
-  theme_minimal()`
+          refLinks: [
+            { label: 'Seaborn', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.14-visualization-with-seaborn.html' }
+          ]
         }
-      }
-    ]
+      ]
+    }
   };
+}
 
-  // For categories not explicitly defined, provide generic steps
-  const defaultSteps = [
-    {
-      id: 'preprocessing',
-      title: '데이터 전처리',
-      description: '분석에 필요한 데이터 변환 및 전처리를 수행합니다.',
-      codeTemplate: {
-        python: `import pandas as pd
+// ─── Default (fallback) ─────────────────────────────────────────
+
+function getDefaultMenu(outcome, treatment) {
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing',
+          label: '데이터 전처리',
+          checked: true,
+          description: '분석에 필요한 데이터 변환 및 전처리를 수행합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv')
 df = df.dropna()
 print(f"전처리 후: {df.shape}")
 print(df.head())`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-str(df)
-head(df)`
-      }
+          refLinks: [
+            { label: 'Pandas', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/03.00-introduction-to-pandas.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'baseline',
-      title: '기본 모형 추정',
-      description: '핵심 독립변수만 포함한 기본 모형을 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'baseline',
+          label: '기본 모형 추정',
+          checked: true,
+          description: '핵심 독립변수만 포함한 기본 모형을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
-X = sm.add_constant(df[[treatment]])
-model = sm.OLS(df[outcome], X).fit()
+X = sm.add_constant(df[['${treatment}']])
+model = sm.OLS(df['${outcome}'], X).fit()
 print(model.summary())`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-model <- lm(${outcome} ~ ${treatment}, data=df)
-summary(model)`
-      }
-    },
-    {
-      id: 'full_model',
-      title: '확장 모형 추정',
-      description: '통제변수를 추가한 확장 모형을 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'OLS', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'full_model',
+          label: '확장 모형 추정',
+          checked: true,
+          description: '통제변수를 추가한 확장 모형을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
 id_cols = ['entity_id', 'year', 'time', 'id', 'ID']
 numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in id_cols if c in df.columns], errors='ignore')
-X = sm.add_constant(numeric_df.drop(columns=[outcome]))
-model = sm.OLS(df[outcome], X).fit(cov_type='HC1')
+X = sm.add_constant(numeric_df.drop(columns=['${outcome}']))
+model = sm.OLS(df['${outcome}'], X).fit(cov_type='HC1')
 print(model.summary())`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-model <- lm(${outcome} ~ ., data=df)
-summary(model)`
-      }
+          refLinks: [
+            { label: 'Multiple Regression', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'visualization',
-      title: '시각화',
-      description: '분석 결과를 시각화합니다.',
-      codeTemplate: {
-        python: `import matplotlib.pyplot as plt
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization',
+          label: '핵심 변수 산점도',
+          checked: true,
+          description: '분석 결과를 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv')
 
 # 핵심 변수 산점도
 plt.figure(figsize=(8,5))
-plt.scatter(df[treatment], df[outcome], alpha=0.5)
-plt.xlabel(f'{treatment}')
-plt.ylabel(f'{outcome}')
+plt.scatter(df['${treatment}'], df['${outcome}'], alpha=0.5)
+plt.xlabel('${treatment}')
+plt.ylabel('${outcome}')
 plt.title('핵심 변수 관계')
 plt.show()`,
-        r: `library(ggplot2)
-df <- read.csv('mock_data.csv')
-
-ggplot(df, aes(x=${treatment}, y=${outcome})) +
-  geom_point(alpha=0.5) +
-  geom_smooth(method="lm") +
-  labs(title="핵심 변수 관계") +
-  theme_minimal()`
-      }
+          refLinks: [
+            { label: 'Scatter Plot', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.02-simple-scatter-plots.html' }
+          ]
+        }
+      ]
     }
-  ];
-
-  return stepsMap[category] || defaultSteps;
+  };
 }
 
-/* ============================================================
-   분석 설계(analysis_design) 기반 전용 Step 생성
-   매개분석, 조절분석, 조절된 매개분석, 위계적 회귀분석
-   ============================================================ */
+// ─── Mediation (design-specific) ─────────────────────────────────
 
-function getDesignSpecificSteps(framework, design, keyVars) {
-  const outcome = keyVars.outcome || 'outcome_var';
-  const treatment = keyVars.treatment || 'treatment_var';
-  const mediator = design.mediator || 'mediator_var';
-  const moderator = design.moderator || 'moderator_var';
-  const covariates = (design.covariates || []).join("', '");
-
-  switch (framework) {
-    case 'mediation':
-    case 'PROCESS':
-      if (design.moderator && design.mediator) {
-        return getModeratedMediationSteps(outcome, treatment, mediator, moderator, covariates);
-      }
-      if (design.moderator && !design.mediator) {
-        return getModerationSteps(outcome, treatment, moderator, covariates);
-      }
-      if (design.mediator) {
-        return getMediationSteps(outcome, treatment, mediator, covariates);
-      }
-      return getMediationSteps(outcome, treatment, mediator, covariates);
-
-    case 'moderation':
-      return getModerationSteps(outcome, treatment, moderator, covariates);
-
-    case 'moderated_mediation':
-      return getModeratedMediationSteps(outcome, treatment, mediator, moderator, covariates);
-
-    case 'hierarchical_regression':
-      return getHierarchicalRegressionSteps(outcome, treatment, covariates);
-
-    case 'path_analysis':
-      return getMediationSteps(outcome, treatment, mediator, covariates);
-
-    default:
-      return [];
-  }
-}
-
-function getMediationSteps(outcome, treatment, mediator, covariates) {
+function getMediationMenu(outcome, treatment, mediator, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  const autoDetect = getAutoDetectMediation(outcome, treatment, mediator);
 
-  // 공통 변수 자동감지 코드 (모든 mediation 스텝에서 사용)
-  const autoDetect = `
-# === 변수 자동감지 ===
-numeric_df = df.select_dtypes(include='number')
-num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
-
-# 종속변수(Y)
-outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
-# 독립변수(X)
-treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
-# 매개변수(M): 지정된 이름이 없으면 X, Y를 제외한 첫 번째 수치 컬럼
-remaining = [c for c in num_cols if c != outcome and c != treatment]
-mediator = '${mediator}' if '${mediator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
-
-if not outcome or not treatment or not mediator:
-    print("ERROR: 분석에 필요한 변수(X, M, Y)를 찾을 수 없습니다.")
-    print(f"  사용 가능 컬럼: {list(df.columns)}")
-else:
-    print(f"독립변수(X): {treatment}")
-    print(f"매개변수(M): {mediator}")
-    print(f"종속변수(Y): {outcome}")`;
-
-  return [
-    {
-      id: 'preprocessing_mediation',
-      title: '매개분석 전처리',
-      description: '매개변수, 독립변수, 종속변수의 분포를 확인하고 분석을 준비합니다.',
-      codeTemplate: {
-        python: `import pandas as pd
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing_mediation',
+          label: '매개분석 전처리',
+          checked: true,
+          description: '매개변수, 독립변수, 종속변수의 분포를 확인하고 분석을 준비합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2280,18 +2441,21 @@ print(df[available].describe().round(3))
 # 변수 간 상관
 print("\\n=== 상관행렬 ===")
 print(df[available].corr().round(3))`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- Filter(is.numeric, df)
-cat("사용 가능 수치 변수:", paste(names(nums), collapse=", "), "\\n")
-if (ncol(nums) >= 3) cor(nums[,1:3], use="complete.obs") |> round(3)`
-      }
+          refLinks: [
+            { label: 'Mediation Analysis', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'path_a',
-      title: '경로 a: X → M (독립→매개)',
-      description: '독립변수가 매개변수에 미치는 효과(경로 a)를 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'path_a',
+          label: '경로 a: X -> M (독립->매개)',
+          checked: true,
+          description: '독립변수가 매개변수에 미치는 효과(경로 a)를 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2299,25 +2463,22 @@ ${autoDetect}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-# 경로 a: X → M
+# 경로 a: X -> M
 X_a = sm.add_constant(df[[treatment] + cov_cols])
 model_a = sm.OLS(df[mediator], X_a).fit(cov_type='HC1')
-print(f"=== 경로 a: {treatment} → {mediator} ===")
+print(f"=== 경로 a: {treatment} -> {mediator} ===")
 print(model_a.summary())
 print(f"\\na = {model_a.params[treatment]:.4f}, p = {model_a.pvalues[treatment]:.4f}")`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-x <- nums[2]; m <- nums[3]
-f <- as.formula(paste(m, "~", x))
-summary(lm(f, data=df))`
-      }
-    },
-    {
-      id: 'path_b_cprime',
-      title: '경로 b, c\': M → Y + 직접효과',
-      description: '매개변수→종속변수 경로(b)와 직접효과(c\')를 동시에 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'Path Analysis', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'path_b_cprime',
+          label: "경로 b, c': M -> Y + 직접효과",
+          checked: true,
+          description: "매개변수->종속변수 경로(b)와 직접효과(c')를 동시에 추정합니다.",
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2325,15 +2486,15 @@ ${autoDetect}
 ${covList}
 cov_cols = [c for c in covs if c in df.columns]
 
-# 경로 b + c': M, X → Y
+# 경로 b + c': M, X -> Y
 X_bc = sm.add_constant(df[[treatment, mediator] + cov_cols])
 model_bc = sm.OLS(df[outcome], X_bc).fit(cov_type='HC1')
-print(f"=== 경로 b, c': {treatment} + {mediator} → {outcome} ===")
+print(f"=== 경로 b, c': {treatment} + {mediator} -> {outcome} ===")
 print(model_bc.summary())
 
 b = model_bc.params[mediator]
 c_prime = model_bc.params[treatment]
-print(f"\\nb (매개→종속) = {b:.4f}, p = {model_bc.pvalues[mediator]:.4f}")
+print(f"\\nb (매개->종속) = {b:.4f}, p = {model_bc.pvalues[mediator]:.4f}")
 print(f"c' (직접효과) = {c_prime:.4f}, p = {model_bc.pvalues[treatment]:.4f}")
 
 # 총효과 모형 (c = c' + a*b)
@@ -2341,21 +2502,16 @@ X_c = sm.add_constant(df[[treatment] + cov_cols])
 model_c = sm.OLS(df[outcome], X_c).fit(cov_type='HC1')
 c_total = model_c.params[treatment]
 print(f"\\nc (총효과) = {c_total:.4f}, p = {model_c.pvalues[treatment]:.4f}")`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-y <- nums[1]; x <- nums[2]; m <- nums[3]
-f_bc <- as.formula(paste(y, "~", x, "+", m))
-summary(lm(f_bc, data=df))
-f_c <- as.formula(paste(y, "~", x))
-summary(lm(f_c, data=df))`
-      }
-    },
-    {
-      id: 'indirect_effect',
-      title: '간접효과 + 부트스트래핑 CI',
-      description: '간접효과(a×b)를 계산하고 부트스트래핑으로 신뢰구간을 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'Mediation Paths', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'indirect_effect',
+          label: '간접효과 + 부트스트래핑 CI',
+          checked: true,
+          description: '간접효과(a*b)를 계산하고 부트스트래핑으로 신뢰구간을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 import numpy as np
 
@@ -2373,7 +2529,7 @@ b = sm.OLS(df[outcome], X_bc).fit().params[mediator]
 c_prime = sm.OLS(df[outcome], X_bc).fit().params[treatment]
 
 indirect = a * b
-print(f"간접효과 (a × b) = {indirect:.4f}")
+print(f"간접효과 (a \\u00d7 b) = {indirect:.4f}")
 print(f"직접효과 (c') = {c_prime:.4f}")
 print(f"총효과 (c' + a*b) = {c_prime + indirect:.4f}")
 
@@ -2399,19 +2555,22 @@ ci_upper = np.percentile(boot_indirect, 97.5)
 
 print(f"\\n=== 부트스트래핑 95% CI (N={n_boot}) ===")
 print(f"간접효과: {indirect:.4f} [{ci_lower:.4f}, {ci_upper:.4f}]")
-print(f"{'→ 유의' if ci_lower > 0 or ci_upper < 0 else '→ 비유의'} (0이 CI에 {'미포함' if ci_lower > 0 or ci_upper < 0 else '포함'})")`,
-        r: `# R 부트스트래핑은 Python 탭을 이용해 주세요.
-df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-cat("수치 변수:", paste(nums, collapse=", "), "\\n")`
-      }
+print(f"{'-> 유의' if ci_lower > 0 or ci_upper < 0 else '-> 비유의'} (0이 CI에 {'미포함' if ci_lower > 0 or ci_upper < 0 else '포함'})")`,
+          refLinks: [
+            { label: 'Bootstrap CI', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.03-hyperparameters-and-model-validation.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'visualization_mediation',
-      title: '매개효과 시각화',
-      description: '경로 다이어그램과 부트스트래핑 분포를 시각화합니다.',
-      codeTemplate: {
-        python: `import matplotlib.pyplot as plt
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization_mediation',
+          label: '매개효과 경로 다이어그램',
+          checked: true,
+          description: '경로 다이어그램과 부트스트래핑 분포를 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import statsmodels.api as sm
 import pandas as pd
@@ -2456,46 +2615,37 @@ ax.annotate('', xy=(8.2, 4.5), xytext=(5.8, 7), arrowprops=dict(arrowstyle='->',
 ax.text(7.2, 6.2, f'b = {b:.3f}{sig(b_p)}', fontsize=10, fontweight='bold')
 ax.annotate('', xy=(8.2, 4), xytext=(1.8, 4), arrowprops=dict(arrowstyle='->', lw=2, linestyle='dashed'))
 ax.text(5, 3.3, f"c' = {c_prime:.3f}{sig(cp_p)}", fontsize=10, fontweight='bold')
-ax.text(5, 2.3, f"간접효과(a×b) = {indirect:.4f}", fontsize=11, ha='center', fontweight='bold', color='darkred')
+ax.text(5, 2.3, f"간접효과(a\\u00d7b) = {indirect:.4f}", fontsize=11, ha='center', fontweight='bold', color='darkred')
 
 ax.set_title('매개효과 경로 다이어그램', fontsize=14, fontweight='bold', pad=20)
 plt.tight_layout()
 plt.show()`,
-        r: `cat("경로 다이어그램은 Python 탭에서 확인하세요.")`
-      }
+          refLinks: [
+            { label: 'Path Diagram', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
+        }
+      ]
     }
-  ];
+  };
 }
 
-function getModerationSteps(outcome, treatment, moderator, covariates) {
+// ─── Moderation (design-specific) ────────────────────────────────
+
+function getModerationMenu(outcome, treatment, moderator, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  const autoDetectMod = getAutoDetectModeration(outcome, treatment, moderator);
 
-  // 공통 변수 자동감지 코드 (moderation)
-  const autoDetectMod = `
-# === 변수 자동감지 ===
-numeric_df = df.select_dtypes(include='number')
-num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
-
-outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
-treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
-remaining = [c for c in num_cols if c != outcome and c != treatment]
-moderator = '${moderator}' if '${moderator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
-
-if not outcome or not treatment or not moderator:
-    print("ERROR: 분석에 필요한 변수(X, W, Y)를 찾을 수 없습니다.")
-    print(f"  사용 가능 컬럼: {list(df.columns)}")
-else:
-    print(f"독립변수(X): {treatment}")
-    print(f"조절변수(W): {moderator}")
-    print(f"종속변수(Y): {outcome}")`;
-
-  return [
-    {
-      id: 'preprocessing_moderation',
-      title: '조절분석 전처리 (평균중심화)',
-      description: '조절변수와 독립변수를 평균중심화하고 상호작용항을 생성합니다.',
-      codeTemplate: {
-        python: `import pandas as pd
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing_moderation',
+          label: '조절분석 전처리 (평균중심화)',
+          checked: true,
+          description: '조절변수와 독립변수를 평균중심화하고 상호작용항을 생성합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2515,17 +2665,21 @@ print(df[available].describe().round(3))
 
 print("\\n=== 상관행렬 ===")
 print(df[available].corr().round(3))`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- Filter(is.numeric, df)
-summary(nums)`
-      }
+          refLinks: [
+            { label: 'Moderation', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'interaction_model',
-      title: '상호작용 모형 추정',
-      description: '독립변수, 조절변수, 상호작용항을 포함한 회귀모형을 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'interaction_model',
+          label: '상호작용 모형 추정',
+          checked: true,
+          description: '독립변수, 조절변수, 상호작용항을 포함한 회귀모형을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2553,23 +2707,20 @@ model2 = sm.OLS(df[outcome], X2).fit(cov_type='HC1')
 print("\\n=== 모형 2: 상호작용항 포함 ===")
 print(model2.summary())
 
-# R² 변화
+# R\\u00b2 변화
 delta_r2 = model2.rsquared - model1.rsquared
-print(f"\\nΔR² = {delta_r2:.4f}")
+print(f"\\n\\u0394R\\u00b2 = {delta_r2:.4f}")
 print(f"상호작용 계수 = {model2.params['interaction']:.4f}, p = {model2.pvalues['interaction']:.4f}")`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-x <- nums[2]; w <- nums[3]; y <- nums[1]
-f <- as.formula(paste(y, "~", x, "*", w))
-summary(lm(f, data=df))`
-      }
-    },
-    {
-      id: 'simple_slopes',
-      title: '단순기울기 분석 (Simple Slopes)',
-      description: '조절변수의 수준별(M-1SD, M, M+1SD) 독립변수→종속변수 효과를 분석합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'Interaction Effects', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'simple_slopes',
+          label: '단순기울기 분석 (Simple Slopes)',
+          checked: true,
+          description: '조절변수의 수준별(M-1SD, M, M+1SD) 독립변수->종속변수 효과를 분석합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 import numpy as np
 
@@ -2602,18 +2753,21 @@ for label, w_val in [('M - 1SD', -w_sd), ('M (평균)', 0), ('M + 1SD', w_sd)]:
     p_val = 2 * (1 - __import__('scipy').stats.t.cdf(abs(t_val), model.df_resid))
     sig = '***' if p_val < .001 else '**' if p_val < .01 else '*' if p_val < .05 else 'ns'
     print(f"{label}: slope = {slope:.4f}, SE = {se:.4f}, t = {t_val:.4f}, p = {p_val:.4f} {sig}")`,
-        r: `# R simple slopes는 Python 탭을 이용해 주세요.
-df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-cat("수치 변수:", paste(nums, collapse=", "), "\\n")`
-      }
+          refLinks: [
+            { label: 'Simple Slopes', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'visualization_moderation',
-      title: '조절효과 시각화',
-      description: '조절변수 수준별 회귀선 그래프(상호작용 플롯)를 생성합니다.',
-      codeTemplate: {
-        python: `import matplotlib.pyplot as plt
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization_moderation',
+          label: '조절효과 시각화',
+          checked: true,
+          description: '조절변수 수준별 회귀선 그래프(상호작용 플롯)를 생성합니다.',
+          code: `import matplotlib.pyplot as plt
 import statsmodels.api as sm
 import pandas as pd
 import numpy as np
@@ -2642,49 +2796,37 @@ for w_val, label, color in [(-w_sd, 'Low (-1SD)', 'blue'), (0, 'Mean', 'green'),
 
 ax.set_xlabel(f'{treatment} (중심화)', fontsize=12)
 ax.set_ylabel(f'{outcome}', fontsize=12)
-ax.set_title(f'조절효과: {moderator} 수준별 {treatment}→{outcome} 관계', fontsize=13)
+ax.set_title(f'조절효과: {moderator} 수준별 {treatment}->{outcome} 관계', fontsize=13)
 ax.legend(fontsize=11)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()`,
-        r: `cat("조절효과 시각화는 Python 탭에서 확인하세요.")`
-      }
+          refLinks: [
+            { label: 'Interaction Plot', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
+        }
+      ]
     }
-  ];
+  };
 }
 
-function getModeratedMediationSteps(outcome, treatment, mediator, moderator, covariates) {
+// ─── Moderated Mediation (design-specific) ───────────────────────
+
+function getModeratedMediationMenu(outcome, treatment, mediator, moderator, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  const autoDetectModMed = getAutoDetectModMed(outcome, treatment, mediator, moderator);
 
-  // 공통 변수 자동감지 코드 (moderated mediation: X, M, W, Y)
-  const autoDetectModMed = `
-# === 변수 자동감지 ===
-numeric_df = df.select_dtypes(include='number')
-num_cols = [c for c in numeric_df.columns if c not in ['id', 'ID', 'entity_id', 'Unnamed: 0']]
-
-outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
-treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
-remaining = [c for c in num_cols if c != outcome and c != treatment]
-mediator = '${mediator}' if '${mediator}' in df.columns else (remaining[0] if len(remaining) > 0 else None)
-remaining2 = [c for c in remaining if c != mediator]
-moderator = '${moderator}' if '${moderator}' in df.columns else (remaining2[0] if len(remaining2) > 0 else None)
-
-if not all([outcome, treatment, mediator, moderator]):
-    print("ERROR: 분석에 필요한 변수(X, M, W, Y)를 찾을 수 없습니다.")
-    print(f"  사용 가능 컬럼: {list(df.columns)}")
-else:
-    print(f"독립변수(X): {treatment}")
-    print(f"매개변수(M): {mediator}")
-    print(f"조절변수(W): {moderator}")
-    print(f"종속변수(Y): {outcome}")`;
-
-  return [
-    {
-      id: 'preprocessing_modmed',
-      title: '조절된 매개분석 전처리',
-      description: '변수 확인, 평균중심화, 상관행렬을 확인합니다.',
-      codeTemplate: {
-        python: `import pandas as pd
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing_modmed',
+          label: '조절된 매개분석 전처리',
+          checked: true,
+          description: '변수 확인, 평균중심화, 상관행렬을 확인합니다.',
+          code: `import pandas as pd
 import numpy as np
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2699,17 +2841,21 @@ key_vars = [treatment, mediator, moderator, outcome]
 available = [v for v in key_vars if v and v in df.columns]
 print("\\n=== 상관행렬 ===")
 print(df[available].corr().round(3))`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- Filter(is.numeric, df)
-if (ncol(nums) >= 4) cor(nums[,1:4], use="complete.obs") |> round(3)`
-      }
+          refLinks: [
+            { label: 'Moderated Mediation', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'path_a_modmed',
-      title: '경로 a: X → M',
-      description: '독립변수→매개변수 경로를 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'path_a_modmed',
+          label: '경로 a: X -> M',
+          checked: true,
+          description: '독립변수->매개변수 경로를 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2719,20 +2865,18 @@ cov_cols = [c for c in covs if c in df.columns]
 
 X_a = sm.add_constant(df[[treatment] + cov_cols])
 model_a = sm.OLS(df[mediator], X_a).fit(cov_type='HC1')
-print(f"=== 경로 a: {treatment} → {mediator} ===")
+print(f"=== 경로 a: {treatment} -> {mediator} ===")
 print(model_a.summary())`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-f <- as.formula(paste(nums[3], "~", nums[2]))
-summary(lm(f, data=df))`
-      }
-    },
-    {
-      id: 'path_b_moderated',
-      title: '경로 b(조절됨): M*W → Y',
-      description: '매개변수→종속변수 경로에 조절변수의 상호작용을 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'Path a', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'path_b_moderated',
+          label: '경로 b(조절됨): M*W -> Y',
+          checked: true,
+          description: '매개변수->종속변수 경로에 조절변수의 상호작용을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2749,23 +2893,21 @@ df['MW_interaction'] = df[m_c] * df[w_c]
 
 X = sm.add_constant(df[[treatment, m_c, w_c, 'MW_interaction'] + cov_cols])
 model = sm.OLS(df[outcome], X).fit(cov_type='HC1')
-print("=== M + W + M×W → Y (직접효과 포함) ===")
+print("=== M + W + M\\u00d7W -> Y (직접효과 포함) ===")
 print(model.summary())
 
-print(f"\\nb (M→Y 주효과) = {model.params[m_c]:.4f}")
-print(f"상호작용 (M×W) = {model.params['MW_interaction']:.4f}, p = {model.pvalues['MW_interaction']:.4f}")`,
-        r: `# R 코드는 Python 탭 참조
-df <- read.csv('mock_data.csv') |> na.omit()
-nums <- names(Filter(is.numeric, df))
-cat("수치 변수:", paste(nums, collapse=", "), "\\n")`
-      }
-    },
-    {
-      id: 'conditional_indirect',
-      title: '조건부 간접효과 (부트스트래핑)',
-      description: '조절변수 수준별 간접효과를 부트스트래핑으로 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+print(f"\\nb (M->Y 주효과) = {model.params[m_c]:.4f}")
+print(f"상호작용 (M\\u00d7W) = {model.params['MW_interaction']:.4f}, p = {model.pvalues['MW_interaction']:.4f}")`,
+          refLinks: [
+            { label: 'Moderated Path b', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'conditional_indirect',
+          label: '조건부 간접효과 (부트스트래핑)',
+          checked: true,
+          description: '조절변수 수준별 간접효과를 부트스트래핑으로 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 import numpy as np
 
@@ -2808,22 +2950,27 @@ for label, boots in results.items():
     ci_lo, ci_hi = np.percentile(boots, [2.5, 97.5])
     mean_ie = np.mean(boots)
     sig = '유의' if ci_lo > 0 or ci_hi < 0 else '비유의'
-    print(f"{label}: indirect = {mean_ie:.4f} [{ci_lo:.4f}, {ci_hi:.4f}] → {sig}")
+    print(f"{label}: indirect = {mean_ie:.4f} [{ci_lo:.4f}, {ci_hi:.4f}] -> {sig}")
 
 # 조절된 매개 지수 (Index of Moderated Mediation)
 idx_mm = results['High (+1SD)'] - results['Low (-1SD)']
 ci_lo, ci_hi = np.percentile(idx_mm, [2.5, 97.5])
 print(f"\\n조절된 매개 지수 = {np.mean(idx_mm):.4f} [{ci_lo:.4f}, {ci_hi:.4f}]")`,
-        r: `cat("R 코드는 Python 탭 참조\\n")
-cat("PROCESS macro 또는 mediation 패키지 사용을 권장합니다.")`
-      }
+          refLinks: [
+            { label: 'Conditional Indirect Effects', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.03-hyperparameters-and-model-validation.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'visualization_modmed',
-      title: '조건부 간접효과 시각화',
-      description: '조절변수 수준별 간접효과 그래프를 생성합니다.',
-      codeTemplate: {
-        python: `import matplotlib.pyplot as plt
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization_modmed',
+          label: '조건부 간접효과 시각화',
+          checked: true,
+          description: '조절변수 수준별 간접효과 그래프를 생성합니다.',
+          code: `import matplotlib.pyplot as plt
 import numpy as np
 import statsmodels.api as sm
 import pandas as pd
@@ -2866,44 +3013,67 @@ for w_val, label in [(w_mean - w_sd, '-1SD'), (w_mean, 'M'), (w_mean + w_sd, '+1
     ax.annotate(f'{label}\\n{ie:.3f}', xy=(w_val, ie), xytext=(5, 10), textcoords='offset points', fontsize=9)
 
 ax.set_xlabel(f'{moderator}', fontsize=12)
-ax.set_ylabel('간접효과 (a × b)', fontsize=12)
+ax.set_ylabel('간접효과 (a \\u00d7 b)', fontsize=12)
 ax.set_title(f'조건부 간접효과: {moderator} 수준에 따른 매개효과 변화', fontsize=13)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()`,
-        r: `cat("R 시각화는 Python 탭 참조")`
-      }
+          refLinks: [
+            { label: 'Conditional Effects Viz', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
+        }
+      ]
     }
-  ];
+  };
 }
 
-function getHierarchicalRegressionSteps(outcome, treatment, covariates) {
+// ─── Hierarchical Regression (design-specific) ───────────────────
+
+function getHierarchicalRegressionMenu(outcome, treatment, covariates) {
   const covList = covariates ? `covs = ['${covariates}']` : `covs = []`;
+  const autoDetectHier = getAutoDetectHierarchical(outcome, treatment);
 
-  // 공통 변수 자동감지 코드 (hierarchical regression)
-  const autoDetectHier = `
-# === 변수 자동감지 ===
-numeric_df = df.select_dtypes(include='number')
-id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
-num_cols = [c for c in numeric_df.columns if c not in id_cols]
+  return {
+    descriptive: {
+      label: '기술통계',
+      items: [
+        ...getCommonDescriptiveItems(outcome, treatment),
+        {
+          id: 'preprocessing_hierarchical',
+          label: '위계적 회귀분석 전처리',
+          checked: true,
+          description: '변수 확인 및 분석 준비를 합니다.',
+          code: `import pandas as pd
+import numpy as np
 
-outcome = '${outcome}' if '${outcome}' in df.columns else (num_cols[0] if len(num_cols) > 0 else None)
-treatment = '${treatment}' if '${treatment}' in df.columns else (num_cols[1] if len(num_cols) > 1 else None)
+df = pd.read_csv('mock_data.csv').dropna()
+${autoDetectHier}
+${covList}
+cov_cols = [c for c in covs if c in df.columns]
 
-if not outcome or not treatment:
-    print("ERROR: 분석에 필요한 변수(X, Y)를 찾을 수 없습니다.")
-    print(f"  사용 가능 컬럼: {list(df.columns)}")
-else:
-    print(f"독립변수(X): {treatment}")
-    print(f"종속변수(Y): {outcome}")`;
+if not cov_cols:
+    cov_cols = [c for c in num_cols if c != outcome and c != treatment][:3]
 
-  return [
-    {
-      id: 'model_step1',
-      title: '1단계: 통제변수 모형',
-      description: '통제변수만 포함한 기저 모형을 추정합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+print(f"\\n통제변수: {cov_cols}")
+print(f"\\n=== 기술통계 ===")
+print(df[[outcome, treatment] + cov_cols].describe().round(3))
+print(f"\\n=== 상관행렬 ===")
+print(df[[outcome, treatment] + cov_cols].corr().round(3))`,
+          refLinks: [
+            { label: 'Hierarchical Regression', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        }
+      ]
+    },
+    inferential: {
+      label: '추론통계',
+      items: [
+        {
+          id: 'model_step1',
+          label: '1단계: 통제변수 모형',
+          checked: true,
+          description: '통제변수만 포함한 기저 모형을 추정합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2918,18 +3088,17 @@ X1 = sm.add_constant(df[cov_cols])
 model1 = sm.OLS(df[outcome], X1).fit(cov_type='HC1')
 print("=== 1단계: 통제변수 모형 ===")
 print(model1.summary())
-print(f"\\nR² = {model1.rsquared:.4f}")`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-model1 <- lm(${outcome} ~ ., data=df[c("${outcome}", "control1", "control2")])
-summary(model1)`
-      }
-    },
-    {
-      id: 'model_step2',
-      title: '2단계: 핵심 독립변수 추가',
-      description: '핵심 독립변수를 추가하고 R² 변화량을 확인합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+print(f"\\nR\\u00b2 = {model1.rsquared:.4f}")`,
+          refLinks: [
+            { label: 'Step 1 Model', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'model_step2',
+          label: '2단계: 핵심 독립변수 추가',
+          checked: true,
+          description: '핵심 독립변수를 추가하고 R-squared 변화량을 확인합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 
 df = pd.read_csv('mock_data.csv').dropna()
@@ -2951,8 +3120,8 @@ print("=== 2단계: 핵심 독립변수 추가 ===")
 print(model2.summary())
 
 delta_r2 = model2.rsquared - model1.rsquared
-print(f"\\nR² 변화: {model1.rsquared:.4f} → {model2.rsquared:.4f}")
-print(f"ΔR² = {delta_r2:.4f}")
+print(f"\\nR\\u00b2 변화: {model1.rsquared:.4f} -> {model2.rsquared:.4f}")
+print(f"\\u0394R\\u00b2 = {delta_r2:.4f}")
 
 # F 변화 검정
 from scipy import stats
@@ -2961,19 +3130,16 @@ df_den = model2.df_resid
 f_change = (delta_r2 / df_num) / ((1 - model2.rsquared) / df_den)
 p_change = 1 - stats.f.cdf(f_change, df_num, df_den)
 print(f"F change = {f_change:.4f}, p = {p_change:.4f}")`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-model1 <- lm(${outcome} ~ control1 + control2, data=df)
-model2 <- lm(${outcome} ~ control1 + control2 + ${treatment}, data=df)
-anova(model1, model2)
-summary(model2)`
-      }
-    },
-    {
-      id: 'model_comparison',
-      title: '모형 비교 (ΔR² 종합)',
-      description: '모든 단계의 R² 변화와 F 검정 결과를 종합합니다.',
-      codeTemplate: {
-        python: `import statsmodels.api as sm
+          refLinks: [
+            { label: 'R-squared Change', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        },
+        {
+          id: 'model_comparison',
+          label: '모형 비교 (delta-R-squared 종합)',
+          checked: true,
+          description: '모든 단계의 R-squared 변화와 F 검정 결과를 종합합니다.',
+          code: `import statsmodels.api as sm
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -2998,7 +3164,7 @@ m2 = sm.OLS(df[outcome], X2).fit()
 models.append(('2단계: + 핵심 IV', m2))
 
 print("=== 위계적 회귀분석 종합 ===")
-print(f"{'단계':<20} {'R²':>8} {'adj R²':>8} {'ΔR²':>8} {'F change':>10} {'p':>8}")
+print(f"{'단계':<20} {'R\\u00b2':>8} {'adj R\\u00b2':>8} {'\\u0394R\\u00b2':>8} {'F change':>10} {'p':>8}")
 print("-" * 65)
 
 prev_r2 = 0
@@ -3014,18 +3180,21 @@ for name, m in models:
     sig = '***' if p_ch < .001 else '**' if p_ch < .01 else '*' if p_ch < .05 else ''
     print(f"{name:<20} {m.rsquared:>8.4f} {m.rsquared_adj:>8.4f} {dr2:>8.4f} {f_ch:>10.4f} {p_ch:>7.4f} {sig}")
     prev_r2 = m.rsquared`,
-        r: `df <- read.csv('mock_data.csv') |> na.omit()
-model1 <- lm(${outcome} ~ control1 + control2, data=df)
-model2 <- lm(${outcome} ~ control1 + control2 + ${treatment}, data=df)
-anova(model1, model2)`
-      }
+          refLinks: [
+            { label: 'Model Comparison', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/05.06-linear-regression.html' }
+          ]
+        }
+      ]
     },
-    {
-      id: 'visualization_hierarchical',
-      title: 'R² 변화 시각화',
-      description: '각 단계별 R² 변화를 막대그래프로 시각화합니다.',
-      codeTemplate: {
-        python: `import matplotlib.pyplot as plt
+    visualization: {
+      label: '시각화',
+      items: [
+        {
+          id: 'visualization_hierarchical',
+          label: 'R-squared 변화 시각화',
+          checked: true,
+          description: '각 단계별 R-squared 변화를 막대그래프로 시각화합니다.',
+          code: `import matplotlib.pyplot as plt
 import statsmodels.api as sm
 import pandas as pd
 
@@ -3049,26 +3218,29 @@ delta_r2 = [m1.rsquared, m2.rsquared - m1.rsquared]
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-# R² 누적
+# R\\u00b2 누적
 axes[0].bar(stages, r2_vals, color=['steelblue', 'coral'])
-axes[0].set_ylabel('R²')
-axes[0].set_title('단계별 R² (누적)')
+axes[0].set_ylabel('R\\u00b2')
+axes[0].set_title('단계별 R\\u00b2 (누적)')
 for i, v in enumerate(r2_vals):
     axes[0].text(i, v + 0.01, f'{v:.4f}', ha='center', fontweight='bold')
 
-# ΔR²
+# \\u0394R\\u00b2
 colors = ['steelblue', 'coral']
 axes[1].bar(stages, delta_r2, color=colors)
-axes[1].set_ylabel('ΔR²')
-axes[1].set_title('단계별 R² 변화량')
+axes[1].set_ylabel('\\u0394R\\u00b2')
+axes[1].set_title('단계별 R\\u00b2 변화량')
 for i, v in enumerate(delta_r2):
     axes[1].text(i, v + 0.005, f'{v:.4f}', ha='center', fontweight='bold')
 
-plt.suptitle('위계적 회귀분석: R² 변화', fontsize=14, fontweight='bold')
+plt.suptitle('위계적 회귀분석: R\\u00b2 변화', fontsize=14, fontweight='bold')
 plt.tight_layout()
 plt.show()`,
-        r: `cat("R 시각화는 Python 탭 참조")`
-      }
+          refLinks: [
+            { label: 'Bar Charts', url: 'https://jakevdp.github.io/PythonDataScienceHandbook/04.00-introduction-to-matplotlib.html' }
+          ]
+        }
+      ]
     }
-  ];
+  };
 }

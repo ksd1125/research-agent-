@@ -448,186 +448,308 @@ function setupMethodNavHandlers() {
 }
 
 /* ============================================================================
-   언어 토글 핸들러 (Python/R)
+   (언어 토글 제거됨 — Python 전용, Phase 7)
    ============================================================================ */
 
 function setupLanguageToggleHandlers() {
-  const langBtns = document.querySelectorAll('.code-lang-tab');
-  langBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const lang = btn.getAttribute('data-lang');
-      currentLanguage = lang;
-
-      // 활성 버튼 업데이트
-      langBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      // 현재 탭이 practice라면 코드 업데이트
-      const practicePanel = $('panel-practice');
-      if (practicePanel && practicePanel.classList.contains('active')) {
-        updatePracticeStepsForLanguage(lang);
-      }
-    });
-  });
+  // R 제거 후 Python 전용 — 더 이상 토글 불필요
 }
 
 /* ============================================================================
    분석 스텝 로드 및 렌더링 (Tab 2)
    ============================================================================ */
 
+/** 현재 분석 메뉴 캐시 (리본 UI에서 사용) */
+let currentAnalysisMenu = null;
+
 async function loadAndRenderAnalysisSteps(methodIndex) {
   try {
     const stepsContainer = $('practice-steps');
     if (!stepsContainer) return;
 
-    // 로딩 표시
-    stepsContainer.innerHTML = '<div class="loading-text">분석 스텝 로드 중...</div>';
+    stepsContainer.innerHTML = '<div class="loading-text">분석 메뉴 구성 중...</div>';
 
     const result = await loadAnalysisSteps(methodIndex);
     if (!result || !result.steps) {
-      stepsContainer.innerHTML = '<p>분석 스텝을 찾을 수 없습니다.</p>';
+      stepsContainer.innerHTML = '<p>분석 메뉴를 구성할 수 없습니다.</p>';
       return;
     }
 
-    // Step 네비게이션 바 생성
-    let navHtml = '<div class="step-nav-bar">';
-    result.steps.forEach((step, idx) => {
-      const label = step.title || `Step ${idx + 1}`;
-      navHtml += `<button class="step-nav-btn" data-nav-idx="${idx}">${label}</button>`;
-    });
-    navHtml += '</div>';
+    const menu = result.steps;
+    currentAnalysisMenu = menu;
+    const groups = ['descriptive', 'inferential', 'visualization'];
 
-    // 스텝 카드 렌더링
-    let html = navHtml;
-    result.steps.forEach((step, idx) => {
-      html += renderStepCard(step, idx, methodIndex);
+    // 액션 바
+    let html = `<div class="analysis-action-bar">
+      <button class="btn-run-checked" id="btn-run-checked">▶ 선택 항목 실행</button>
+      <button class="btn-export-notebook" id="btn-export-notebook">📥 Notebook 내보내기</button>
+    </div>`;
+
+    // 리본 탭
+    html += '<div class="ribbon-tabs">';
+    groups.forEach((g, i) => {
+      if (!menu[g]) return;
+      const active = i === 0 ? ' active' : '';
+      html += `<button class="ribbon-tab${active}" data-group="${g}">${escapeHtml(menu[g].label)}</button>`;
     });
+    html += '</div>';
+
+    // 체크박스 패널
+    groups.forEach((g, i) => {
+      if (!menu[g]) return;
+      const active = i === 0 ? ' active' : '';
+      html += `<div class="ribbon-panel${active}" data-group="${g}">`;
+      html += '<div class="checkbox-grid">';
+      (menu[g].items || []).forEach(item => {
+        const checked = item.checked ? ' checked' : '';
+        const refs = (item.refLinks || []).map(r =>
+          `<a class="ref-link" href="${r.url}" target="_blank" rel="noopener" title="${escapeHtml(r.label)}">📖</a>`
+        ).join('');
+        html += `<label class="analysis-item">
+          <input type="checkbox" data-item-id="${item.id}" data-group="${g}"${checked}>
+          <span class="item-label">${escapeHtml(item.label)}</span>${refs}
+        </label>`;
+      });
+      html += '</div></div>';
+    });
+
+    // Pyodide 상태 표시 (전역)
+    html += '<div class="pyodide-status" id="pyodide-status-global" style="display:none;"></div>';
+
+    // 결과 영역
+    html += '<div id="analysis-results"></div>';
 
     stepsContainer.innerHTML = html;
-
-    // 네비게이션 핸들러
-    document.querySelectorAll('.step-nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const idx = btn.getAttribute('data-nav-idx');
-        const card = document.querySelector(`.step-card[data-step-idx="${idx}"]`);
-        if (card) {
-          card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          card.classList.add('step-card-highlight');
-          setTimeout(() => card.classList.remove('step-card-highlight'), 1500);
-        }
-      });
-    });
-
-    // 실행 버튼 핸들러 설정
-    setupStepExecutionHandlers(methodIndex);
+    setupRibbonHandlers(methodIndex, menu);
   } catch (error) {
-    console.error('분석 스텝 로드 오류:', error);
+    console.error('분석 메뉴 로드 오류:', error);
     const stepsContainer = $('practice-steps');
     if (stepsContainer) {
-      stepsContainer.innerHTML = '<p>오류: 분석 스텝을 로드할 수 없습니다.</p>';
+      stepsContainer.innerHTML = '<p>오류: 분석 메뉴를 로드할 수 없습니다.</p>';
     }
   }
 }
 
-function renderStepCard(step, stepIdx, methodIndex) {
-  const stepId = step.id || `step-${stepIdx}`;
-  const lang = currentLanguage;
-  const code = (step.codeTemplate && step.codeTemplate[lang]) || step[`code_${lang}`] || step.code || '';
+function setupRibbonHandlers(methodIndex, menu) {
+  // 리본 탭 전환
+  document.querySelectorAll('.ribbon-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.ribbon-tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.ribbon-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      const panel = document.querySelector(`.ribbon-panel[data-group="${btn.dataset.group}"]`);
+      if (panel) panel.classList.add('active');
+    });
+  });
 
-  let html = `<div class="step-card" data-step-idx="${stepIdx}" data-step-id="${stepId}">`;
-  html += `<div class="step-header">`;
-  html += `<h3 class="step-title">${escapeHtml(step.title || `Step ${stepIdx + 1}`)}</h3>`;
-  html += `</div>`;
-
-  if (step.description) {
-    html += `<div class="step-description">`;
-    html += markdownToHtml(step.description);
-    html += `</div>`;
+  // 선택 항목 실행
+  const runBtn = document.getElementById('btn-run-checked');
+  if (runBtn) {
+    runBtn.addEventListener('click', () => runCheckedItems(methodIndex, menu));
   }
 
-  // 코드 블록 (접을 수 있음, 편집 가능 textarea)
-  html += `<div class="step-code-section">`;
-  html += `<button class="code-toggle" data-step-idx="${stepIdx}">💻 코드 보기</button>`;
-  html += `<div class="code-edit-wrap" data-step-idx="${stepIdx}" style="display:none;">`;
-  html += `<textarea class="code-textarea" data-step-idx="${stepIdx}" spellcheck="false">${escapeCode(code)}</textarea>`;
-  html += `<button class="btn-rerun" data-step-idx="${stepIdx}" data-step-id="${stepId}" title="수정된 코드로 재실행">🔄 재실행</button>`;
-  html += `</div>`;
-  html += `</div>`;
-
-  // 실행 버튼 영역
-  html += `<div class="step-action-buttons">`;
-  if (lang === 'python') {
-    html += `<button class="btn-run-python" data-step-idx="${stepIdx}" data-step-id="${stepId}">🐍 Python 실행</button>`;
-  }
-  html += `<button class="btn-execute" data-step-idx="${stepIdx}" data-step-id="${stepId}">🤖 AI 시뮬레이션</button>`;
-  html += `</div>`;
-
-  // Pyodide 상태 표시 영역
-  html += `<div class="pyodide-status" data-step-idx="${stepIdx}" style="display:none;"></div>`;
-
-  // 결과 영역 (처음에는 숨김)
-  html += `<div class="step-result" data-step-idx="${stepIdx}" style="display:none; margin-top: 10px;">`;
-  html += `</div>`;
-
-  html += `</div>`;
-  return html;
-}
-
-function setupStepExecutionHandlers(methodIndex) {
-  // 코드 토글 핸들러
-  const codeToggles = document.querySelectorAll('.code-toggle');
-  codeToggles.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const stepIdx = btn.getAttribute('data-step-idx');
-      const codeWrap = document.querySelector(`.code-edit-wrap[data-step-idx="${stepIdx}"]`);
-      if (codeWrap) {
-        const isHidden = codeWrap.style.display === 'none';
-        codeWrap.style.display = isHidden ? 'block' : 'none';
-        btn.textContent = isHidden ? '💻 코드 숨기기' : '💻 코드 보기';
+  // Notebook 내보내기
+  const exportBtn = document.getElementById('btn-export-notebook');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => {
+      if (typeof window.exportAnalysisNotebook === 'function') {
+        window.exportAnalysisNotebook(menu, mockDataCache);
+      } else {
+        alert('Notebook 내보내기 모듈을 로드하지 못했습니다.');
       }
     });
-  });
+  }
+}
 
-  // AI 시뮬레이션 버튼 핸들러
-  const executeButtons = document.querySelectorAll('.btn-execute');
-  executeButtons.forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const stepIdx = parseInt(btn.getAttribute('data-step-idx'), 10);
-      const stepId = btn.getAttribute('data-step-id');
-      const lang = currentLanguage;
+async function runCheckedItems(methodIndex, menu) {
+  const checked = document.querySelectorAll('input[data-item-id]:checked');
+  if (checked.length === 0) {
+    alert('실행할 항목을 하나 이상 선택해주세요.');
+    return;
+  }
 
-      const textarea = document.querySelector(`.code-textarea[data-step-idx="${stepIdx}"]`);
-      const code = textarea ? textarea.value : '';
+  const resultsDiv = document.getElementById('analysis-results');
+  if (!resultsDiv) return;
+  resultsDiv.innerHTML = '';
 
-      await executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx);
+  const groups = ['descriptive', 'inferential', 'visualization'];
+
+  // 체크된 아이템을 그룹 순서대로 정렬
+  const itemsToRun = [];
+  for (const g of groups) {
+    if (!menu[g]) continue;
+    for (const item of menu[g].items) {
+      const cb = document.querySelector(`input[data-item-id="${item.id}"]:checked`);
+      if (cb) itemsToRun.push({ ...item, group: g });
+    }
+  }
+
+  for (const item of itemsToRun) {
+    // 아코디언 생성
+    const accDiv = document.createElement('div');
+    accDiv.className = 'result-accordion';
+    accDiv.dataset.itemId = item.id;
+    accDiv.innerHTML = `
+      <button class="accordion-header" data-item-id="${item.id}">
+        <span class="acc-title">${escapeHtml(item.label)}</span>
+        <span class="acc-status">⏳ 실행 중...</span>
+      </button>
+      <div class="accordion-body open">
+        <div class="item-result"><div class="loading-text">🐍 Python 실행 중...</div></div>
+        <details class="code-details">
+          <summary>💻 코드 보기/편집</summary>
+          <div class="code-edit-wrap-inline">
+            <textarea class="code-textarea" data-item-id="${item.id}" spellcheck="false">${escapeCode(item.code)}</textarea>
+            <button class="btn-rerun-item" data-item-id="${item.id}">🔄 재실행</button>
+          </div>
+        </details>
+      </div>`;
+    resultsDiv.appendChild(accDiv);
+
+    // 아코디언 헤더 토글
+    const header = accDiv.querySelector('.accordion-header');
+    header.addEventListener('click', () => {
+      const body = accDiv.querySelector('.accordion-body');
+      body.classList.toggle('open');
     });
-  });
 
-  // 🐍 Python 실행 버튼 핸들러
-  const pythonButtons = document.querySelectorAll('.btn-run-python');
-  pythonButtons.forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const stepIdx = parseInt(btn.getAttribute('data-step-idx'), 10);
-
-      const textarea = document.querySelector(`.code-textarea[data-step-idx="${stepIdx}"]`);
-      const code = textarea ? textarea.value : '';
-
-      await executePythonStep(code, stepIdx);
+    // 재실행 버튼
+    const rerunBtn = accDiv.querySelector('.btn-rerun-item');
+    rerunBtn.addEventListener('click', async () => {
+      const textarea = accDiv.querySelector(`.code-textarea[data-item-id="${item.id}"]`);
+      const editedCode = textarea ? textarea.value : item.code;
+      const resultEl = accDiv.querySelector('.item-result');
+      const statusEl = accDiv.querySelector('.acc-status');
+      statusEl.textContent = '⏳ 재실행 중...';
+      resultEl.innerHTML = '<div class="loading-text">🐍 Python 재실행 중...</div>';
+      try {
+        await executePythonForItem(editedCode, resultEl);
+        statusEl.textContent = '✅';
+      } catch (e) {
+        statusEl.textContent = '❌';
+      }
     });
-  });
 
-  // 🔄 재실행 버튼 핸들러 (수정된 코드로 Python 재실행)
-  const rerunButtons = document.querySelectorAll('.btn-rerun');
-  rerunButtons.forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const stepIdx = parseInt(btn.getAttribute('data-step-idx'), 10);
+    // Python 실행
+    const resultEl = accDiv.querySelector('.item-result');
+    const statusEl = accDiv.querySelector('.acc-status');
+    try {
+      await executePythonForItem(item.code, resultEl);
+      statusEl.textContent = '✅';
+    } catch (e) {
+      statusEl.textContent = '❌';
+      resultEl.innerHTML = `<div class="pyodide-error">❌ 오류: ${escapeHtml(e.message || String(e))}</div>`;
+    }
+  }
+}
 
-      const textarea = document.querySelector(`.code-textarea[data-step-idx="${stepIdx}"]`);
-      const code = textarea ? textarea.value : '';
+/**
+ * 개별 분석 항목 Python 실행 (결과를 targetEl에 렌더링)
+ */
+async function executePythonForItem(code, targetEl) {
+  // Pyodide 초기화
+  if (!isPyodideReady() && !pyodideInitializing) {
+    pyodideInitializing = true;
+    const statusDiv = document.getElementById('pyodide-status-global');
+    if (statusDiv) {
+      statusDiv.style.display = 'block';
+      statusDiv.innerHTML = '<div class="pyodide-loading">🐍 Python 환경 로딩 중... (최초 1회, 약 5~10초)</div>';
+    }
+    try {
+      await initPyodide((msg) => {
+        if (statusDiv) statusDiv.innerHTML = `<div class="pyodide-loading">${escapeHtml(msg)}</div>`;
+      });
+    } catch (err) {
+      pyodideInitializing = false;
+      if (statusDiv) statusDiv.style.display = 'none';
+      throw err;
+    }
+    pyodideInitializing = false;
+    if (statusDiv) statusDiv.style.display = 'none';
+  } else if (pyodideInitializing) {
+    // 초기화 진행 중 → 잠시 대기 후 재시도
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!isPyodideReady()) {
+      targetEl.innerHTML = '<div class="loading-text">Python 환경 로딩 대기 중...</div>';
+      return;
+    }
+  }
 
-      await executePythonStep(code, stepIdx);
-    });
-  });
+  // CSV 데이터 준비
+  let csvData = mockDataCache ? mockDataCache.csv : null;
+  if (!csvData) {
+    const ds = getDataStructure();
+    if (ds && ds.variables && ds.variables.length > 0) {
+      try {
+        const pc = getPaperContext();
+        mockDataCache = generateMockData(ds, 500, pc?.analysis_category || null);
+        csvData = mockDataCache.csv;
+      } catch (autoErr) {
+        console.warn('자동 데이터 생성 실패:', autoErr.message);
+      }
+    }
+  }
+  if (!csvData) {
+    targetEl.innerHTML = '<div class="pyodide-error">⚠️ 먼저 "논문 개요 & 데이터" 탭에서 🧪 실습 데이터 생성 버튼을 눌러주세요.</div>';
+    return;
+  }
+
+  // 변수 자동감지 코드 주입
+  const autoDetectPrefix = `
+# === [AUTO] 변수 자동감지 ===
+import pandas as pd
+try:
+    outcome
+except NameError:
+    _df_check = pd.read_csv('mock_data.csv')
+    _num_df = _df_check.select_dtypes(include='number')
+    _skip_cols = ['id', 'ID', 'entity_id', 'Unnamed: 0', 'year', 'time']
+    _num_cols = [c for c in _num_df.columns if c not in _skip_cols]
+    outcome = _num_cols[0] if len(_num_cols) > 0 else None
+    treatment = _num_cols[1] if len(_num_cols) > 1 else None
+    _remaining = [c for c in _num_cols if c != outcome and c != treatment]
+    mediator = _remaining[0] if len(_remaining) > 0 else None
+    moderator = _remaining[1] if len(_remaining) > 1 else None
+    del _df_check, _num_df, _skip_cols, _num_cols, _remaining
+`;
+  const finalCode = autoDetectPrefix + '\n' + code;
+  const result = await runPython(finalCode, csvData);
+
+  // 결과 렌더링
+  let html = '<div class="python-execution-result">';
+
+  if (result.stdout && result.stdout.trim()) {
+    html += '<div class="result-subsection">';
+    html += `<pre class="python-stdout">${escapeHtml(result.stdout)}</pre>`;
+    html += '</div>';
+    const apaTableHtml = renderApaTable(result.stdout, 1);
+    if (apaTableHtml) {
+      html += '<div class="result-subsection">';
+      html += '<h4>📑 APA Style Table</h4>';
+      html += apaTableHtml;
+      html += '</div>';
+    }
+  }
+
+  if (result.images && result.images.length > 0) {
+    html += '<div class="result-subsection">';
+    html += `<h4>📊 Figure (${result.images.length}개)</h4>`;
+    html += renderApaFigures(result.images, 1);
+    html += '</div>';
+  }
+
+  if (result.error) {
+    html += '<div class="result-subsection">';
+    html += `<pre class="python-error">${escapeHtml(result.error)}</pre>`;
+    html += '</div>';
+  }
+
+  if ((!result.stdout || !result.stdout.trim()) && (!result.images || result.images.length === 0) && !result.error) {
+    html += '<div class="result-subsection"><p>코드가 실행되었으나 출력이 없습니다.</p></div>';
+  }
+
+  html += '</div>';
+  targetEl.innerHTML = html;
 }
 
 async function executeAnalysisStep(methodIndex, stepId, code, lang, stepIdx) {
@@ -919,8 +1041,8 @@ async function generateAndRenderApaReport(stepIdx, stdout, images) {
   }
 }
 
-function updatePracticeStepsForLanguage(lang) {
-  // 언어 변경 시 전체 스텝을 다시 렌더링 (코드 템플릿이 언어별로 다름)
+function updatePracticeStepsForLanguage() {
+  // Phase 7: Python 전용 — 리본 UI 다시 렌더링
   loadAndRenderAnalysisSteps(currentMethodIndex);
 }
 
