@@ -136,9 +136,23 @@ body {
   margin-top: 10px;
   animation: fadeInUp 0.2s ease;
 }
+.api-key-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.api-key-slot-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  min-width: 30px;
+  flex-shrink: 0;
+}
 .api-key-input-wrap {
   display: flex;
   gap: 6px;
+  flex: 1;
 }
 .api-key-input {
   flex: 1;
@@ -1799,6 +1813,85 @@ textarea { resize: vertical; line-height: 1.6; min-height: 140px; }
 }
 .code-toggle:hover { text-decoration: underline; }
 
+/* ── Split Layout (Phase 7) ── */
+.analysis-split-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* PC: 좌우 분할 */
+@media (min-width: 900px) {
+  .analysis-split-layout {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+  .analysis-menu-pane {
+    flex: 0 0 340px;
+    max-width: 380px;
+    position: sticky;
+    top: 10px;
+  }
+  .analysis-results-pane {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+/* 메뉴 패널 */
+.analysis-menu-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 결과 패널 — 결과 없으면 숨김 */
+.analysis-results-pane {
+  display: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  overflow: hidden;
+}
+.analysis-results-pane.has-results {
+  display: flex;
+  flex-direction: column;
+}
+
+.results-pane-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.results-pane-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-text);
+}
+.btn-clear-results {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-clear-results:hover {
+  background: #fee;
+  border-color: #e55;
+  color: #c33;
+}
+
+#analysis-results {
+  padding: 12px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
 /* ── Ribbon Tabs (Phase 7) ── */
 .analysis-action-bar {
   display: flex;
@@ -1869,9 +1962,9 @@ textarea { resize: vertical; line-height: 1.6; min-height: 140px; }
 .ribbon-panel.active { display: block; }
 
 .checkbox-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .analysis-item {
   display: flex;
@@ -1954,6 +2047,54 @@ textarea { resize: vertical; line-height: 1.6; min-height: 140px; }
   background: var(--color-primary);
   color: #fff;
 }
+
+/* ── AI 코드 어시스턴트 (Phase 8-B) ── */
+.ai-assistant-wrap {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border);
+}
+.ai-assistant-input-row {
+  display: flex;
+  gap: 6px;
+}
+.ai-assistant-input {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.ai-assistant-input:focus {
+  outline: none;
+  border-color: #9b59b6;
+  box-shadow: 0 0 0 2px rgba(155, 89, 182, 0.15);
+}
+.ai-assistant-input::placeholder { color: #aaa; }
+.btn-ai-assist {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #9b59b6;
+  border-radius: var(--radius-sm);
+  background: #9b59b6;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+.btn-ai-assist:hover { background: #8e44ad; border-color: #8e44ad; }
+.btn-ai-assist:disabled { opacity: 0.6; cursor: wait; }
+.ai-assistant-msg {
+  margin-top: 6px;
+  font-size: 12px;
+  min-height: 0;
+}
+.ai-loading { color: #9b59b6; }
+.ai-success { color: #27ae60; }
+.ai-error { color: #e74c3c; }
 
 /* Code Edit Textarea */
 .code-edit-wrap {
