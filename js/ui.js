@@ -480,17 +480,11 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
     currentAnalysisMenu = menu;
     const groups = ['descriptive', 'inferential', 'visualization'];
 
-    // 좌우 분할 레이아웃 시작
+    // ── 2-Panel 레이아웃 ──
     let html = '<div class="analysis-split-layout">';
 
-    // ── 왼쪽: 메뉴 패널 ──
+    // ══════════ 왼쪽 패널: 메뉴 + 코드 편집기 ══════════
     html += '<div class="analysis-menu-pane">';
-
-    // 액션 바
-    html += `<div class="analysis-action-bar">
-      <button class="btn-run-checked" id="btn-run-checked">▶ 선택 항목 실행</button>
-      <button class="btn-export-notebook" id="btn-export-notebook">📥 Notebook 내보내기</button>
-    </div>`;
 
     // 리본 탭
     html += '<div class="ribbon-tabs">';
@@ -520,18 +514,52 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
       html += '</div></div>';
     });
 
-    // Pyodide 상태 표시 (전역)
+    // 액션 바
+    html += `<div class="analysis-action-bar">
+      <button class="btn-run-checked" id="btn-run-checked">▶ 선택 항목 실행</button>
+      <button class="btn-export-notebook" id="btn-export-notebook">📥 Notebook 내보내기</button>
+    </div>`;
+
+    // ── 코드 편집 영역 (선택한 항목의 코드) ──
+    html += `<div class="code-editor-section" id="code-editor-section">
+      <div class="code-editor-header">
+        <span class="code-editor-title" id="code-editor-title">💻 코드 편집기</span>
+      </div>
+      <textarea class="code-textarea code-editor-main" id="code-editor-textarea" spellcheck="false" placeholder="왼쪽 항목을 클릭하거나 실행하면 코드가 여기에 표시됩니다."></textarea>
+      <div class="ai-assistant-wrap">
+        <div class="ai-assistant-input-row">
+          <input type="text" class="ai-assistant-input" id="code-editor-ai-input" placeholder="💬 코드 수정 요청 (예: 통제변수에서 firm_age 빼줘)">
+          <button class="btn-ai-assist" id="code-editor-ai-btn">✨ AI 수정</button>
+        </div>
+        <div class="ai-assistant-msg" id="code-editor-ai-msg"></div>
+      </div>
+      <div class="code-editor-actions">
+        <button class="btn-rerun-editor" id="btn-rerun-editor">🔄 재실행</button>
+      </div>
+    </div>`;
+
+    // Pyodide 상태 표시
     html += '<div class="pyodide-status" id="pyodide-status-global" style="display:none;"></div>';
 
     html += '</div>'; // .analysis-menu-pane 끝
 
-    // ── 오른쪽: 결과 패널 ──
+    // ══════════ 오른쪽 패널: 탭(Python 결과 / APA Style) ══════════
     html += `<div class="analysis-results-pane" id="analysis-results-pane">
       <div class="results-pane-header">
-        <span class="results-pane-title">📊 분석 결과</span>
+        <div class="results-tab-bar">
+          <button class="results-tab active" data-results-tab="python">🐍 Python 결과</button>
+          <button class="results-tab" data-results-tab="apa">📝 APA Style</button>
+        </div>
         <button class="btn-clear-results" id="btn-clear-results" title="결과 닫기">✕ 닫기</button>
       </div>
-      <div id="analysis-results"></div>
+      <div class="results-tab-content active" id="results-tab-python">
+        <div id="analysis-results"></div>
+      </div>
+      <div class="results-tab-content" id="results-tab-apa">
+        <div id="apa-results">
+          <div class="apa-empty-state">실행 결과가 없습니다. 항목을 선택하고 실행하면 APA 보고서가 여기에 표시됩니다.</div>
+        </div>
+      </div>
     </div>`;
 
     html += '</div>'; // .analysis-split-layout 끝
@@ -547,6 +575,9 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
   }
 }
 
+/** 현재 코드 편집기에 로드된 항목 ID */
+let currentEditorItemId = null;
+
 function setupRibbonHandlers(methodIndex, menu) {
   // 리본 탭 전환
   document.querySelectorAll('.ribbon-tab').forEach(btn => {
@@ -556,6 +587,19 @@ function setupRibbonHandlers(methodIndex, menu) {
       btn.classList.add('active');
       const panel = document.querySelector(`.ribbon-panel[data-group="${btn.dataset.group}"]`);
       if (panel) panel.classList.add('active');
+    });
+  });
+
+  // 체크박스 항목 라벨 클릭 → 코드 편집기에 로드
+  document.querySelectorAll('.analysis-item .item-label').forEach(label => {
+    label.style.cursor = 'pointer';
+    label.addEventListener('click', (e) => {
+      // 체크박스 토글은 유지, 라벨 클릭 시 편집기 로드
+      const cb = label.parentElement.querySelector('input[type="checkbox"]');
+      if (!cb) return;
+      const itemId = cb.dataset.itemId;
+      const group = cb.dataset.group;
+      loadItemToEditor(itemId, group, menu);
     });
   });
 
@@ -583,11 +627,151 @@ function setupRibbonHandlers(methodIndex, menu) {
     clearBtn.addEventListener('click', () => {
       const resultsPane = document.getElementById('analysis-results-pane');
       const resultsDiv = document.getElementById('analysis-results');
+      const apaDiv = document.getElementById('apa-results');
       if (resultsDiv) resultsDiv.innerHTML = '';
+      if (apaDiv) apaDiv.innerHTML = '<div class="apa-empty-state">실행 결과가 없습니다.</div>';
       if (resultsPane) resultsPane.classList.remove('has-results');
     });
   }
+
+  // 오른쪽 패널 탭 전환 (Python / APA)
+  document.querySelectorAll('.results-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.results-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.results-tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      const targetId = `results-tab-${tab.dataset.resultsTab}`;
+      const target = document.getElementById(targetId);
+      if (target) target.classList.add('active');
+    });
+  });
+
+  // 코드 편집기 — 재실행 버튼
+  const rerunBtn = document.getElementById('btn-rerun-editor');
+  if (rerunBtn) {
+    rerunBtn.addEventListener('click', () => rerunFromEditor(menu));
+  }
+
+  // 코드 편집기 — AI 수정 버튼
+  const aiBtn = document.getElementById('code-editor-ai-btn');
+  const aiInput = document.getElementById('code-editor-ai-input');
+  if (aiBtn && aiInput) {
+    const handleAi = async () => {
+      const request = aiInput.value.trim();
+      if (!request) { aiInput.focus(); return; }
+      const textarea = document.getElementById('code-editor-textarea');
+      const currentCode = textarea ? textarea.value : '';
+      const aiMsg = document.getElementById('code-editor-ai-msg');
+      aiBtn.disabled = true;
+      aiBtn.textContent = '⏳ 수정 중...';
+      if (aiMsg) aiMsg.innerHTML = '<span class="ai-loading">🤖 AI가 코드를 수정하고 있습니다...</span>';
+      try {
+        const result = await requestCodeAssistant(currentCode, request);
+        if (result.modifiedCode && textarea) textarea.value = result.modifiedCode;
+        if (aiMsg) aiMsg.innerHTML = `<span class="ai-success">✅ ${escapeHtml(result.explanation)}</span>`;
+        aiInput.value = '';
+      } catch (e) {
+        if (aiMsg) aiMsg.innerHTML = `<span class="ai-error">❌ ${escapeHtml(e.message)}</span>`;
+      } finally {
+        aiBtn.disabled = false;
+        aiBtn.textContent = '✨ AI 수정';
+      }
+    };
+    aiBtn.addEventListener('click', handleAi);
+    aiInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleAi(); });
+  }
 }
+
+/** 항목 코드를 왼쪽 편집기에 로드 */
+function loadItemToEditor(itemId, group, menu) {
+  if (!menu[group]) return;
+  const item = (menu[group].items || []).find(it => it.id === itemId);
+  if (!item) return;
+
+  currentEditorItemId = itemId;
+  const titleEl = document.getElementById('code-editor-title');
+  const textarea = document.getElementById('code-editor-textarea');
+  if (titleEl) titleEl.textContent = `💻 ${item.label}`;
+  if (textarea) textarea.value = item.code || '';
+
+  // 편집기 섹션 활성화
+  const section = document.getElementById('code-editor-section');
+  if (section) section.classList.add('has-code');
+
+  // 현재 선택 항목 하이라이트
+  document.querySelectorAll('.analysis-item').forEach(el => el.classList.remove('selected'));
+  const cb = document.querySelector(`input[data-item-id="${itemId}"]`);
+  if (cb && cb.parentElement) cb.parentElement.classList.add('selected');
+}
+
+/** 편집기에서 재실행 → 해당 항목 결과 갱신 */
+async function rerunFromEditor(menu) {
+  if (!currentEditorItemId) {
+    alert('먼저 항목을 선택해주세요.');
+    return;
+  }
+  const textarea = document.getElementById('code-editor-textarea');
+  if (!textarea) return;
+  const editedCode = textarea.value;
+
+  // 결과 패널 활성화
+  const resultsPane = document.getElementById('analysis-results-pane');
+  if (resultsPane) resultsPane.classList.add('has-results');
+
+  // Python 탭으로 전환
+  document.querySelectorAll('.results-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.results-tab-content').forEach(c => c.classList.remove('active'));
+  const pyTab = document.querySelector('.results-tab[data-results-tab="python"]');
+  const pyContent = document.getElementById('results-tab-python');
+  if (pyTab) pyTab.classList.add('active');
+  if (pyContent) pyContent.classList.add('active');
+
+  // 해당 아코디언 찾기 또는 새로 생성
+  let accDiv = document.querySelector(`.result-accordion[data-item-id="${currentEditorItemId}"]`);
+  if (!accDiv) {
+    // 아코디언이 없으면 새로 생성
+    const resultsDiv = document.getElementById('analysis-results');
+    if (!resultsDiv) return;
+    // 메뉴에서 항목 정보 찾기
+    let itemLabel = currentEditorItemId;
+    for (const g of ['descriptive', 'inferential', 'visualization']) {
+      if (!menu[g]) continue;
+      const found = (menu[g].items || []).find(it => it.id === currentEditorItemId);
+      if (found) { itemLabel = found.label; break; }
+    }
+    accDiv = document.createElement('div');
+    accDiv.className = 'result-accordion';
+    accDiv.dataset.itemId = currentEditorItemId;
+    accDiv.innerHTML = `
+      <button class="accordion-header" data-item-id="${currentEditorItemId}">
+        <span class="acc-title">${escapeHtml(itemLabel)}</span>
+        <span class="acc-status">⏳ 실행 중...</span>
+      </button>
+      <div class="accordion-body open">
+        <div class="item-result"><div class="loading-text">🐍 Python 실행 중...</div></div>
+      </div>`;
+    resultsDiv.appendChild(accDiv);
+    // 헤더 토글
+    accDiv.querySelector('.accordion-header').addEventListener('click', () => {
+      accDiv.querySelector('.accordion-body').classList.toggle('open');
+    });
+  }
+
+  const resultEl = accDiv.querySelector('.item-result');
+  const statusEl = accDiv.querySelector('.acc-status');
+  if (statusEl) statusEl.textContent = '⏳ 재실행 중...';
+  if (resultEl) resultEl.innerHTML = '<div class="loading-text">🐍 Python 재실행 중...</div>';
+
+  try {
+    await executePythonForItem(editedCode, resultEl);
+    if (statusEl) statusEl.textContent = '✅';
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '❌';
+  }
+}
+
+/** 실행된 결과를 저장 (APA 탭에서 통합 표시용) */
+let executionResults = [];
 
 async function runCheckedItems(methodIndex, menu) {
   const checked = document.querySelectorAll('input[data-item-id]:checked');
@@ -599,10 +783,17 @@ async function runCheckedItems(methodIndex, menu) {
   const resultsDiv = document.getElementById('analysis-results');
   if (!resultsDiv) return;
   resultsDiv.innerHTML = '';
+  executionResults = [];
 
-  // 결과 패널 활성화
+  // 결과 패널 활성화 + Python 탭 전환
   const resultsPane = document.getElementById('analysis-results-pane');
   if (resultsPane) resultsPane.classList.add('has-results');
+  document.querySelectorAll('.results-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.results-tab-content').forEach(c => c.classList.remove('active'));
+  const pyTab = document.querySelector('.results-tab[data-results-tab="python"]');
+  const pyContent = document.getElementById('results-tab-python');
+  if (pyTab) pyTab.classList.add('active');
+  if (pyContent) pyContent.classList.add('active');
 
   const groups = ['descriptive', 'inferential', 'visualization'];
 
@@ -617,10 +808,11 @@ async function runCheckedItems(methodIndex, menu) {
   }
 
   for (const item of itemsToRun) {
-    // 아코디언 생성
+    // 아코디언 생성 (코드 편집기 제거 — 왼쪽 패널로 이동됨)
     const accDiv = document.createElement('div');
     accDiv.className = 'result-accordion';
     accDiv.dataset.itemId = item.id;
+    accDiv.dataset.group = item.group;
     accDiv.innerHTML = `
       <button class="accordion-header" data-item-id="${item.id}">
         <span class="acc-title">${escapeHtml(item.label)}</span>
@@ -628,79 +820,16 @@ async function runCheckedItems(methodIndex, menu) {
       </button>
       <div class="accordion-body open">
         <div class="item-result"><div class="loading-text">🐍 Python 실행 중...</div></div>
-        <details class="code-details">
-          <summary>💻 코드 보기/편집</summary>
-          <div class="code-edit-wrap-inline">
-            <textarea class="code-textarea" data-item-id="${item.id}" spellcheck="false">${escapeCode(item.code)}</textarea>
-            <button class="btn-rerun-item" data-item-id="${item.id}">🔄 재실행</button>
-          </div>
-          <div class="ai-assistant-wrap">
-            <div class="ai-assistant-input-row">
-              <input type="text" class="ai-assistant-input" data-item-id="${item.id}" placeholder="💬 코드 수정 요청 (예: 통제변수에서 firm_age 빼줘)">
-              <button class="btn-ai-assist" data-item-id="${item.id}">✨ AI 수정</button>
-            </div>
-            <div class="ai-assistant-msg" data-item-id="${item.id}"></div>
-          </div>
-        </details>
       </div>`;
     resultsDiv.appendChild(accDiv);
 
-    // 아코디언 헤더 토글
+    // 아코디언 헤더 클릭 → 토글 + 왼쪽 편집기에 코드 로드
     const header = accDiv.querySelector('.accordion-header');
     header.addEventListener('click', () => {
-      const body = accDiv.querySelector('.accordion-body');
-      body.classList.toggle('open');
+      accDiv.querySelector('.accordion-body').classList.toggle('open');
+      // 편집기에 해당 항목 코드 로드
+      loadItemToEditor(item.id, item.group, menu);
     });
-
-    // 재실행 버튼
-    const rerunBtn = accDiv.querySelector('.btn-rerun-item');
-    rerunBtn.addEventListener('click', async () => {
-      const textarea = accDiv.querySelector(`.code-textarea[data-item-id="${item.id}"]`);
-      const editedCode = textarea ? textarea.value : item.code;
-      const resultEl = accDiv.querySelector('.item-result');
-      const statusEl = accDiv.querySelector('.acc-status');
-      statusEl.textContent = '⏳ 재실행 중...';
-      resultEl.innerHTML = '<div class="loading-text">🐍 Python 재실행 중...</div>';
-      try {
-        await executePythonForItem(editedCode, resultEl);
-        statusEl.textContent = '✅';
-      } catch (e) {
-        statusEl.textContent = '❌';
-      }
-    });
-
-    // AI 어시스턴트 버튼
-    const aiBtn = accDiv.querySelector(`.btn-ai-assist[data-item-id="${item.id}"]`);
-    const aiInput = accDiv.querySelector(`.ai-assistant-input[data-item-id="${item.id}"]`);
-    const aiMsg = accDiv.querySelector(`.ai-assistant-msg[data-item-id="${item.id}"]`);
-    if (aiBtn && aiInput) {
-      const handleAiRequest = async () => {
-        const request = aiInput.value.trim();
-        if (!request) { aiInput.focus(); return; }
-        const textarea = accDiv.querySelector(`.code-textarea[data-item-id="${item.id}"]`);
-        const currentCode = textarea ? textarea.value : item.code;
-        aiBtn.disabled = true;
-        aiBtn.textContent = '⏳ 수정 중...';
-        if (aiMsg) aiMsg.innerHTML = '<span class="ai-loading">🤖 AI가 코드를 수정하고 있습니다...</span>';
-        try {
-          const result = await requestCodeAssistant(currentCode, request);
-          if (result.modifiedCode && textarea) {
-            textarea.value = result.modifiedCode;
-          }
-          if (aiMsg) aiMsg.innerHTML = `<span class="ai-success">✅ ${escapeHtml(result.explanation)}</span>`;
-          aiInput.value = '';
-        } catch (e) {
-          if (aiMsg) aiMsg.innerHTML = `<span class="ai-error">❌ ${escapeHtml(e.message)}</span>`;
-        } finally {
-          aiBtn.disabled = false;
-          aiBtn.textContent = '✨ AI 수정';
-        }
-      };
-      aiBtn.addEventListener('click', handleAiRequest);
-      aiInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') handleAiRequest();
-      });
-    }
 
     // Python 실행
     const resultEl = accDiv.querySelector('.item-result');
@@ -708,10 +837,162 @@ async function runCheckedItems(methodIndex, menu) {
     try {
       await executePythonForItem(item.code, resultEl);
       statusEl.textContent = '✅';
+      // 결과 저장 (APA 탭용)
+      executionResults.push({
+        id: item.id,
+        label: item.label,
+        group: item.group,
+        html: resultEl.innerHTML,
+        success: true
+      });
     } catch (e) {
       statusEl.textContent = '❌';
       resultEl.innerHTML = `<div class="pyodide-error">❌ 오류: ${escapeHtml(e.message || String(e))}</div>`;
+      executionResults.push({
+        id: item.id,
+        label: item.label,
+        group: item.group,
+        html: resultEl.innerHTML,
+        success: false
+      });
     }
+
+    // 첫 번째 항목 코드를 자동으로 편집기에 로드
+    if (itemsToRun.indexOf(item) === 0) {
+      loadItemToEditor(item.id, item.group, menu);
+    }
+  }
+
+  // APA 탭 업데이트
+  updateApaTab(executionResults);
+}
+
+/** APA 탭에 통합 결과 렌더링 */
+function updateApaTab(results) {
+  const apaDiv = document.getElementById('apa-results');
+  if (!apaDiv) return;
+
+  const successResults = results.filter(r => r.success);
+  if (successResults.length === 0) {
+    apaDiv.innerHTML = '<div class="apa-empty-state">실행된 결과가 없습니다.</div>';
+    return;
+  }
+
+  let html = '<div class="apa-integrated-report">';
+  html += '<div class="apa-report-header">📝 APA 7th Edition — 통합 결과 보고서</div>';
+
+  // 각 결과에서 APA 관련 요소만 추출
+  for (const r of successResults) {
+    html += `<div class="apa-result-section">`;
+    html += `<h4 class="apa-section-title">${escapeHtml(r.label)}</h4>`;
+
+    // 임시 DOM에서 APA 테이블/피규어 추출
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = r.html;
+
+    // APA Table 추출
+    const apaTables = tempDiv.querySelectorAll('.apa-table-wrap, .apa-styled-table');
+    apaTables.forEach(t => { html += t.outerHTML; });
+
+    // APA Figure 추출
+    const apaFigs = tempDiv.querySelectorAll('.apa-figure');
+    apaFigs.forEach(f => { html += f.outerHTML; });
+
+    // stdout (테이블/피규어 없으면 raw 출력 표시)
+    if (apaTables.length === 0 && apaFigs.length === 0) {
+      const stdout = tempDiv.querySelector('.python-stdout');
+      if (stdout) {
+        html += `<pre class="python-stdout">${stdout.innerHTML}</pre>`;
+      }
+    }
+
+    html += '</div>';
+  }
+
+  // APA 보고서 생성 버튼
+  html += `<div class="apa-report-action" style="margin-top:16px;">
+    <button class="btn-apa-report" id="btn-apa-generate-all">📝 AI APA 해석 보고서 생성</button>
+  </div>`;
+  html += '<div id="apa-ai-report" style="display:none;"></div>';
+
+  html += '</div>';
+  apaDiv.innerHTML = html;
+
+  // APA AI 보고서 생성 버튼 이벤트
+  const apaGenBtn = document.getElementById('btn-apa-generate-all');
+  if (apaGenBtn) {
+    apaGenBtn.addEventListener('click', () => generateIntegratedApaReport(successResults));
+  }
+}
+
+/** AI를 사용하여 통합 APA 보고서 생성 */
+async function generateIntegratedApaReport(results) {
+  const reportDiv = document.getElementById('apa-ai-report');
+  if (!reportDiv) return;
+
+  reportDiv.style.display = 'block';
+  reportDiv.innerHTML = '<div class="loading-text">📝 APA 스타일 통합 보고서 생성 중...</div>';
+
+  try {
+    // 모든 결과의 stdout를 합침
+    let combinedStdout = '';
+    let allImages = [];
+    for (const r of results) {
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = r.html;
+      const stdout = tempDiv.querySelector('.python-stdout');
+      if (stdout) combinedStdout += `\n=== ${r.label} ===\n${stdout.textContent}\n`;
+      tempDiv.querySelectorAll('.apa-figure img').forEach(img => {
+        if (img.src) allImages.push(img.src);
+      });
+    }
+
+    const state = getState();
+    const apiKey = state.apiKey;
+    const methods = getMethods();
+    const paperContext = getPaperContext();
+    const currentMethod = methods[currentMethodIndex] || {};
+    const design = currentMethod.analysis_design || {};
+    const context = {
+      stepTitle: 'Integrated Analysis',
+      stepDescription: results.map(r => r.label).join(', '),
+      analysisType: currentMethod.analysis_type || '',
+      domain: paperContext?.domain || '',
+      outcome: currentMethod.key_variables?.outcome || '',
+      treatment: currentMethod.key_variables?.treatment || '',
+      framework: design.framework || 'none',
+      mediator: design.mediator || '',
+      moderator: design.moderator || '',
+    };
+
+    const apa = await generateApaReport(apiKey, combinedStdout, context);
+
+    let html = '<div class="apa-report-content">';
+    html += '<div class="result-badge apa-badge">📝 APA 7th Edition 결과 보고서</div>';
+
+    if (apa.text) {
+      html += '<div class="apa-text-section"><h4>결과 보고 (Results)</h4>';
+      html += `<div class="apa-report-text">${renderApaText(apa.text)}</div>`;
+      html += '</div>';
+    }
+    if (apa.figureCaption && allImages.length > 0) {
+      html += '<div class="apa-text-section"><h4>Figure Caption</h4>';
+      html += renderApaFigures(allImages, 1, apa.figureCaption);
+      html += '</div>';
+    }
+    if (apa.tableCaption) {
+      html += '<div class="apa-text-section">';
+      html += `<p class="apa-table-caption-text"><em>Table caption:</em> ${escapeHtml(apa.tableCaption)}</p>`;
+      html += '</div>';
+    }
+    if (!apa.text && !apa.tableCaption && !apa.figureCaption) {
+      html += '<div class="apa-text-section"><p style="color:#7f8c8d;">APA 보고서 생성에 실패했습니다.</p></div>';
+    }
+    html += '</div>';
+    reportDiv.innerHTML = html;
+  } catch (error) {
+    console.error('APA 통합 보고서 생성 오류:', error);
+    reportDiv.innerHTML = `<div class="pyodide-error">APA 보고서 생성 실패: ${escapeHtml(error.message)}</div>`;
   }
 }
 
