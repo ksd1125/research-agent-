@@ -121,7 +121,7 @@ function getCommonDescriptiveItems(outcome, treatment) {
     {
       id: 'basic_stats',
       label: '기술통계 확인',
-      checked: true,
+      checked: false,
       description: '데이터의 기본 특성(평균, 표준편차, 분포)을 확인합니다.',
       code: `import pandas as pd
 import numpy as np
@@ -153,7 +153,7 @@ print(df.isnull().sum())`,
     {
       id: 'correlation',
       label: '상관행렬 (유의성 포함)',
-      checked: true,
+      checked: false,
       description: '수치형 변수 간 상관계수와 유의성을 확인합니다.',
       code: `import pandas as pd
 import numpy as np
@@ -278,7 +278,7 @@ function getRegressionMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '데이터 전처리',
-          checked: true,
+          checked: false,
           description: '결측치 처리, 변수 변환, 더미 변수 생성 등 분석 준비를 합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -301,7 +301,7 @@ print(df.head())`,
         {
           id: 'baseline',
           label: '기본 모형 추정 (OLS)',
-          checked: true,
+          checked: false,
           description: '최소자승법(OLS)으로 기본 회귀 모형을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -309,9 +309,15 @@ import pandas as pd
 df = pd.read_csv('mock_data.csv').dropna()
 ${autoDetectBase}
 
-# 모형 1: 기본 모형 (핵심 독립변수만)
-X1 = sm.add_constant(df[[treatment]])
-model1 = sm.OLS(df[outcome], X1).fit(cov_type='HC1')
+# 범주형 변수 자동 처리
+if df[treatment].dtype == 'object' or str(df[treatment].dtype) == 'category':
+    X1 = pd.get_dummies(df[[treatment]], drop_first=True, dtype=float)
+    print(f"\\n[INFO] '{treatment}'은(는) 범주형 → 더미 인코딩 ({X1.shape[1]}개 변수)")
+else:
+    X1 = df[[treatment]].astype(float)
+
+X1 = sm.add_constant(X1)
+model1 = sm.OLS(df[outcome].astype(float), X1).fit(cov_type='HC1')
 print("\\n=== Model 1: 기본 모형 ===")
 print(model1.summary())`,
           refLinks: [
@@ -321,7 +327,7 @@ print(model1.summary())`,
         {
           id: 'full_model',
           label: '확장 모형 추정 (통제변수 포함)',
-          checked: true,
+          checked: false,
           description: '통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -329,10 +335,19 @@ import pandas as pd
 df = pd.read_csv('mock_data.csv').dropna()
 ${autoDetectBase}
 
-# 모형 2: 통제변수 포함
+# 범주형 변수 자동 처리
 control_cols = [c for c in remaining][:5]
-X2 = sm.add_constant(df[[treatment] + control_cols])
-model2 = sm.OLS(df[outcome], X2).fit(cov_type='HC1')
+all_x_cols = [treatment] + control_cols
+X2_parts = []
+for col in all_x_cols:
+    if df[col].dtype == 'object' or str(df[col].dtype) == 'category':
+        dummies = pd.get_dummies(df[[col]], drop_first=True, dtype=float)
+        X2_parts.append(dummies)
+        print(f"[INFO] '{col}' 범주형 → 더미 인코딩 ({dummies.shape[1]}개)")
+    else:
+        X2_parts.append(df[[col]].astype(float))
+X2 = sm.add_constant(pd.concat(X2_parts, axis=1))
+model2 = sm.OLS(df[outcome].astype(float), X2).fit(cov_type='HC1')
 print("\\n=== Model 2: 통제변수 포함 ===")
 print(model2.summary())`,
           refLinks: [
@@ -347,7 +362,7 @@ print(model2.summary())`,
         {
           id: 'visualization',
           label: '계수 Forest Plot',
-          checked: true,
+          checked: false,
           description: '계수 forest plot과 잔차 진단 그래프를 생성합니다.',
           code: `import matplotlib.pyplot as plt
 import numpy as np
@@ -358,8 +373,15 @@ df = pd.read_csv('mock_data.csv').dropna()
 ${autoDetectBase}
 
 numeric_df = df.select_dtypes(include='number').drop(columns=[c for c in _skip if c in df.columns], errors='ignore')
-X = sm.add_constant(numeric_df.drop(columns=[outcome], errors='ignore'))
-model = sm.OLS(df[outcome], X).fit(cov_type='HC1')
+# 범주형 변수 더미 인코딩 추가
+cat_df = df.select_dtypes(include=['object', 'category'])
+if not cat_df.empty:
+    cat_dummies = pd.get_dummies(cat_df, drop_first=True, dtype=float)
+    all_X = pd.concat([numeric_df.drop(columns=[outcome], errors='ignore'), cat_dummies], axis=1)
+else:
+    all_X = numeric_df.drop(columns=[outcome], errors='ignore')
+X = sm.add_constant(all_X)
+model = sm.OLS(df[outcome].astype(float), X).fit(cov_type='HC1')
 
 # 계수 Forest Plot
 fig, ax = plt.subplots(figsize=(8, 5))
@@ -393,7 +415,7 @@ function getCausalInferenceMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '데이터 전처리',
-          checked: true,
+          checked: false,
           description: '데이터 구조 확인, 변수 분포, 결측치를 점검합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -446,7 +468,7 @@ if has_panel and target_y in df.columns:
         {
           id: 'baseline_fe',
           label: '기본 모형',
-          checked: true,
+          checked: false,
           description: '핵심 독립변수와 종속변수의 관계를 추정합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -500,7 +522,7 @@ else:
         {
           id: 'full_model_fe',
           label: '확장 모형 (통제변수 포함)',
-          checked: true,
+          checked: false,
           description: '통제변수를 추가하여 핵심 효과의 강건성을 확인합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -624,7 +646,7 @@ else:
         {
           id: 'visualization',
           label: '추이 및 산점도',
-          checked: true,
+          checked: false,
           description: '주요 변수의 추이와 분포를 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -696,7 +718,7 @@ function getSpatialMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '공간 데이터 전처리',
-          checked: true,
+          checked: false,
           description: '공간 단위(지역/좌표) 확인, 공간 가중치 행렬 준비, 이상값 탐색을 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -727,7 +749,7 @@ print(f"왜도: {df['${outcome}'].skew():.3f}")`,
         {
           id: 'ols_baseline',
           label: 'OLS 기준 모형 (공간효과 미포함)',
-          checked: true,
+          checked: false,
           description: '공간효과를 고려하지 않은 OLS 모형을 추정하여 기준선을 설정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -752,7 +774,7 @@ print(f"Durbin-Watson: {sm.stats.durbin_watson(resid):.3f}")`,
         {
           id: 'spatial_model',
           label: '공간 회귀 모형 (SAR/SEM)',
-          checked: true,
+          checked: false,
           description: '공간 자기상관을 고려한 SAR(Spatial Autoregressive) 또는 SEM(Spatial Error Model)을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -783,7 +805,7 @@ print(f"${'${treatment}'} 계수: {model_fe.params['${treatment}']:.4f} (p={mode
         {
           id: 'visualization',
           label: '공간 패턴 시각화',
-          checked: true,
+          checked: false,
           description: '지역별 분포 히트맵, 잔차 패턴 등을 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -834,7 +856,7 @@ function getTimeSeriesMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '시계열 데이터 전처리',
-          checked: true,
+          checked: false,
           description: '시간 변수 파싱, 정상성(stationarity) 검정, 결측치 보간을 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -870,7 +892,7 @@ print(f"추세 (Kendall tau): {tau:.3f} (p={p_val:.4f})")`,
         {
           id: 'stationarity',
           label: '정상성 검정 (ADF / KPSS)',
-          checked: true,
+          checked: false,
           description: '단위근 검정으로 시계열의 정상성 여부를 확인합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -901,7 +923,7 @@ if adf_result[1] >= 0.05:
         {
           id: 'arima',
           label: 'ARIMA 모형 추정',
-          checked: true,
+          checked: false,
           description: 'ARIMA(p,d,q) 모형을 추정하고 잔차 진단을 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -945,7 +967,7 @@ print(model.summary())`,
         {
           id: 'visualization',
           label: '시계열 시각화',
-          checked: true,
+          checked: false,
           description: '원 시계열, 예측값, ACF/PACF를 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -999,7 +1021,7 @@ function getMachineLearningMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '데이터 전처리 및 분할',
-          checked: true,
+          checked: false,
           description: '특성 스케일링, 결측치 처리, 학습/검증/테스트 세트 분할을 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1039,7 +1061,7 @@ print(f"타깃 평균: {y.mean():.3f}")`,
         {
           id: 'model_training',
           label: '모형 학습 (Random Forest / Gradient Boosting)',
-          checked: true,
+          checked: false,
           description: 'Random Forest와 Gradient Boosting 모형을 학습하고 성능을 비교합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1076,7 +1098,7 @@ print(f"RMSE: {np.sqrt(mean_squared_error(y_test, gb_pred)):.4f}")`,
         {
           id: 'feature_importance',
           label: '특성 중요도 분석',
-          checked: true,
+          checked: false,
           description: '모형의 특성 중요도를 분석하여 핵심 예측 변수를 식별합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1109,7 +1131,7 @@ for feat, val in imp.items():
         {
           id: 'visualization',
           label: '모형 성능 시각화',
-          checked: true,
+          checked: false,
           description: '예측 vs 실측, 잔차 분포, 특성 중요도 차트를 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -1167,7 +1189,7 @@ function getCausalMlMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '인과 ML 데이터 전처리',
-          checked: true,
+          checked: false,
           description: '처리군/통제군 확인, 공변량 균형, 성향점수 추정 준비를 합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1202,7 +1224,7 @@ for c in covariates[:8]:
         {
           id: 'propensity_score',
           label: '성향점수 추정 (Propensity Score)',
-          checked: true,
+          checked: false,
           description: '로지스틱 회귀로 성향점수를 추정하고 매칭/가중 준비를 합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1237,7 +1259,7 @@ print(f"\\nIPW 추정 ATE: {att:.4f}")`,
         {
           id: 'causal_forest',
           label: '이질적 처리효과 (CATE) 추정',
-          checked: true,
+          checked: false,
           description: '처리효과의 이질성을 분석합니다. (Causal Forest 개념 기반)',
           code: `import pandas as pd
 import numpy as np
@@ -1283,7 +1305,7 @@ for c in covariates[:3]:
         {
           id: 'visualization',
           label: '인과 추론 시각화',
-          checked: true,
+          checked: false,
           description: '성향점수 분포, CATE 분포, 공변량 균형 차트를 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -1343,7 +1365,7 @@ function getBayesianMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '데이터 준비 및 사전분포 설정',
-          checked: true,
+          checked: false,
           description: '데이터를 확인하고 사전분포(prior) 설정을 위한 정보를 수집합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1380,7 +1402,7 @@ print(f"오차 SD: HalfCauchy(0, {y.std():.1f})")`,
         {
           id: 'frequentist_baseline',
           label: 'MLE 기준 모형 (빈도주의 비교용)',
-          checked: true,
+          checked: false,
           description: '베이지안 결과와 비교하기 위한 빈도주의 MLE 기준 모형을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -1401,7 +1423,7 @@ print(f"  95% CI: [{model.conf_int().loc['${treatment}',0]:.4f}, {model.conf_int
         {
           id: 'bayesian_estimation',
           label: '베이지안 사후분포 추정 (MCMC 근사)',
-          checked: true,
+          checked: false,
           description: '메트로폴리스-헤이스팅스 MCMC로 사후분포를 근사 추정합니다.',
           code: `import numpy as np
 import pandas as pd
@@ -1450,7 +1472,7 @@ print(f"\\nP(${'${treatment}'} > 0) = {prob_positive:.4f}")`,
         {
           id: 'visualization',
           label: '사후분포 시각화',
-          checked: true,
+          checked: false,
           description: '사전분포/사후분포 비교, 신용구간, 수렴 진단을 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import numpy as np
@@ -1515,7 +1537,7 @@ function getSemMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: 'SEM 데이터 준비',
-          checked: true,
+          checked: false,
           description: '잠재변수 지표 확인, 정규성 검정, 상관행렬 분석을 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1549,7 +1571,7 @@ for col in numeric_df.columns:
         {
           id: 'cfa',
           label: '확인적 요인분석 (CFA)',
-          checked: true,
+          checked: false,
           description: '측정 모형의 타당성을 확인합니다. 요인적재량, 적합도 지수를 분석합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1581,7 +1603,7 @@ print(f"BIC 근사: {-2*log_lik + n_factors*np.log(len(df)):.2f}")`,
         {
           id: 'path_model',
           label: '경로 모형 / 구조 모형 추정',
-          checked: true,
+          checked: false,
           description: '잠재변수 간 구조적 관계(경로)를 추정합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1634,7 +1656,7 @@ else:
         {
           id: 'visualization',
           label: 'SEM 결과 시각화',
-          checked: true,
+          checked: false,
           description: '경로 다이어그램, 적합도 비교, 요인적재량 차트를 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -1692,7 +1714,7 @@ function getSurvivalMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '생존 데이터 전처리',
-          checked: true,
+          checked: false,
           description: '생존 시간, 사건 발생 여부, 중도절단 패턴을 확인합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1724,7 +1746,7 @@ print(f"  범위: [{df[time_col].min():.2f}, {df[time_col].max():.2f}]")`,
         {
           id: 'kaplan_meier',
           label: 'Kaplan-Meier 생존 곡선',
-          checked: true,
+          checked: false,
           description: '비모수적 생존 함수를 추정하고 집단 간 비교를 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1765,7 +1787,7 @@ for i in range(0, len(times), max(1, len(times)//10)):
         {
           id: 'cox_regression',
           label: 'Cox 비례위험 모형',
-          checked: true,
+          checked: false,
           description: '공변량의 위험비(Hazard Ratio)를 추정합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1806,7 +1828,7 @@ if len(covariates) > 0:
         {
           id: 'visualization',
           label: '생존 분석 시각화',
-          checked: true,
+          checked: false,
           description: 'KM 곡선, 위험비 Forest Plot을 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -1860,7 +1882,7 @@ function getMetaAnalysisMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '메타분석 데이터 준비',
-          checked: true,
+          checked: false,
           description: '개별 연구 효과크기(ES), 표준오차, 표본크기를 확인합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1896,7 +1918,7 @@ print(f"\\n가중치 범위: [{df['weight'].min():.2f}, {df['weight'].max():.2f}
         {
           id: 'fixed_effects',
           label: '고정효과 메타분석',
-          checked: true,
+          checked: false,
           description: '역분산 가중 고정효과 모형으로 통합 효과크기를 추정합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1928,7 +1950,7 @@ print(f"z = {fe_z:.3f}, p = {fe_p:.4f}")`,
         {
           id: 'random_effects',
           label: '랜덤효과 메타분석 + 이질성 검정',
-          checked: true,
+          checked: false,
           description: 'DerSimonian-Laird 랜덤효과 모형과 I\u00b2, Q 검정을 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -1987,7 +2009,7 @@ print(f"이질성 수준: {heterogeneity}")`,
         {
           id: 'visualization',
           label: 'Forest Plot & Funnel Plot',
-          checked: true,
+          checked: false,
           description: '개별 연구 효과크기 Forest Plot과 출판 편향 Funnel Plot을 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import numpy as np
@@ -2053,7 +2075,7 @@ function getUnstructuredDataMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '비정형 데이터 전처리',
-          checked: true,
+          checked: false,
           description: '텍스트 정제, 토큰화, TF-IDF 벡터화 등을 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -2088,7 +2110,7 @@ if len(text_cols) > 0:
         {
           id: 'feature_extraction',
           label: '특성 추출 (TF-IDF / 임베딩)',
-          checked: true,
+          checked: false,
           description: '비정형 데이터에서 수치적 특성을 추출합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -2123,7 +2145,7 @@ if len(numeric_df.columns) > 1:
         {
           id: 'model',
           label: '모형 추정',
-          checked: true,
+          checked: false,
           description: '추출된 특성을 활용하여 분류/회귀 모형을 추정합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -2149,7 +2171,7 @@ print(model.summary())`,
         {
           id: 'visualization',
           label: 'PCA 및 변수 관계 시각화',
-          checked: true,
+          checked: false,
           description: '주성분 산점도, 변수 관계 시각화를 생성합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -2202,7 +2224,7 @@ function getExperimentalMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '실험 데이터 전처리',
-          checked: true,
+          checked: false,
           description: '실험 집단 확인, 요인 수준, 표본 크기 균형을 점검합니다.',
           code: `import pandas as pd
 df = pd.read_csv('mock_data.csv')
@@ -2228,7 +2250,7 @@ print(df.groupby(group_col)[outcome].describe().round(3))`,
         {
           id: 'anova',
           label: 'ANOVA / t-검정',
-          checked: true,
+          checked: false,
           description: '집단 간 차이를 검정합니다.',
           code: `import pandas as pd
 from scipy import stats
@@ -2256,7 +2278,7 @@ print(posthoc)`,
         {
           id: 'effect_size',
           label: '효과 크기 계산',
-          checked: true,
+          checked: false,
           description: "Cohen's d, eta-squared 등 효과 크기를 계산합니다.",
           code: `import pingouin as pg
 import pandas as pd
@@ -2283,7 +2305,7 @@ print(anova[['Source','np2']])`,
         {
           id: 'visualization',
           label: '집단 비교 시각화',
-          checked: true,
+          checked: false,
           description: '집단별 비교 박스플롯, 바이올린 플롯을 생성합니다.',
           code: `import matplotlib.pyplot as plt
 import seaborn as sns
@@ -2327,7 +2349,7 @@ function getDefaultMenu(outcome, treatment) {
         {
           id: 'preprocessing',
           label: '데이터 전처리',
-          checked: true,
+          checked: false,
           description: '분석에 필요한 데이터 변환 및 전처리를 수행합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -2348,7 +2370,7 @@ print(df.head())`,
         {
           id: 'baseline',
           label: '기본 모형 추정',
-          checked: true,
+          checked: false,
           description: '핵심 독립변수만 포함한 기본 모형을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2364,7 +2386,7 @@ print(model.summary())`,
         {
           id: 'full_model',
           label: '확장 모형 추정',
-          checked: true,
+          checked: false,
           description: '통제변수를 추가한 확장 모형을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2387,7 +2409,7 @@ print(model.summary())`,
         {
           id: 'visualization',
           label: '핵심 변수 산점도',
-          checked: true,
+          checked: false,
           description: '분석 결과를 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import pandas as pd
@@ -2424,7 +2446,7 @@ function getMediationMenu(outcome, treatment, mediator, covariates) {
         {
           id: 'preprocessing_mediation',
           label: '매개분석 전처리',
-          checked: true,
+          checked: false,
           description: '매개변수, 독립변수, 종속변수의 분포를 확인하고 분석을 준비합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -2453,7 +2475,7 @@ print(df[available].corr().round(3))`,
         {
           id: 'path_a',
           label: '경로 a: X -> M (독립->매개)',
-          checked: true,
+          checked: false,
           description: '독립변수가 매개변수에 미치는 효과(경로 a)를 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2476,7 +2498,7 @@ print(f"\\na = {model_a.params[treatment]:.4f}, p = {model_a.pvalues[treatment]:
         {
           id: 'path_b_cprime',
           label: "경로 b, c': M -> Y + 직접효과",
-          checked: true,
+          checked: false,
           description: "매개변수->종속변수 경로(b)와 직접효과(c')를 동시에 추정합니다.",
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2509,7 +2531,7 @@ print(f"\\nc (총효과) = {c_total:.4f}, p = {model_c.pvalues[treatment]:.4f}")
         {
           id: 'indirect_effect',
           label: '간접효과 + 부트스트래핑 CI',
-          checked: true,
+          checked: false,
           description: '간접효과(a*b)를 계산하고 부트스트래핑으로 신뢰구간을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2568,7 +2590,7 @@ print(f"{'-> 유의' if ci_lower > 0 or ci_upper < 0 else '-> 비유의'} (0이 
         {
           id: 'visualization_mediation',
           label: '매개효과 경로 다이어그램',
-          checked: true,
+          checked: false,
           description: '경로 다이어그램과 부트스트래핑 분포를 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -2643,7 +2665,7 @@ function getModerationMenu(outcome, treatment, moderator, covariates) {
         {
           id: 'preprocessing_moderation',
           label: '조절분석 전처리 (평균중심화)',
-          checked: true,
+          checked: false,
           description: '조절변수와 독립변수를 평균중심화하고 상호작용항을 생성합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -2677,7 +2699,7 @@ print(df[available].corr().round(3))`,
         {
           id: 'interaction_model',
           label: '상호작용 모형 추정',
-          checked: true,
+          checked: false,
           description: '독립변수, 조절변수, 상호작용항을 포함한 회귀모형을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2718,7 +2740,7 @@ print(f"상호작용 계수 = {model2.params['interaction']:.4f}, p = {model2.pv
         {
           id: 'simple_slopes',
           label: '단순기울기 분석 (Simple Slopes)',
-          checked: true,
+          checked: false,
           description: '조절변수의 수준별(M-1SD, M, M+1SD) 독립변수->종속변수 효과를 분석합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2765,7 +2787,7 @@ for label, w_val in [('M - 1SD', -w_sd), ('M (평균)', 0), ('M + 1SD', w_sd)]:
         {
           id: 'visualization_moderation',
           label: '조절효과 시각화',
-          checked: true,
+          checked: false,
           description: '조절변수 수준별 회귀선 그래프(상호작용 플롯)를 생성합니다.',
           code: `import matplotlib.pyplot as plt
 import statsmodels.api as sm
@@ -2824,7 +2846,7 @@ function getModeratedMediationMenu(outcome, treatment, mediator, moderator, cova
         {
           id: 'preprocessing_modmed',
           label: '조절된 매개분석 전처리',
-          checked: true,
+          checked: false,
           description: '변수 확인, 평균중심화, 상관행렬을 확인합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -2853,7 +2875,7 @@ print(df[available].corr().round(3))`,
         {
           id: 'path_a_modmed',
           label: '경로 a: X -> M',
-          checked: true,
+          checked: false,
           description: '독립변수->매개변수 경로를 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2874,7 +2896,7 @@ print(model_a.summary())`,
         {
           id: 'path_b_moderated',
           label: '경로 b(조절됨): M*W -> Y',
-          checked: true,
+          checked: false,
           description: '매개변수->종속변수 경로에 조절변수의 상호작용을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2905,7 +2927,7 @@ print(f"상호작용 (M\\u00d7W) = {model.params['MW_interaction']:.4f}, p = {mo
         {
           id: 'conditional_indirect',
           label: '조건부 간접효과 (부트스트래핑)',
-          checked: true,
+          checked: false,
           description: '조절변수 수준별 간접효과를 부트스트래핑으로 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -2968,7 +2990,7 @@ print(f"\\n조절된 매개 지수 = {np.mean(idx_mm):.4f} [{ci_lo:.4f}, {ci_hi:
         {
           id: 'visualization_modmed',
           label: '조건부 간접효과 시각화',
-          checked: true,
+          checked: false,
           description: '조절변수 수준별 간접효과 그래프를 생성합니다.',
           code: `import matplotlib.pyplot as plt
 import numpy as np
@@ -3041,7 +3063,7 @@ function getHierarchicalRegressionMenu(outcome, treatment, covariates) {
         {
           id: 'preprocessing_hierarchical',
           label: '위계적 회귀분석 전처리',
-          checked: true,
+          checked: false,
           description: '변수 확인 및 분석 준비를 합니다.',
           code: `import pandas as pd
 import numpy as np
@@ -3071,7 +3093,7 @@ print(df[[outcome, treatment] + cov_cols].corr().round(3))`,
         {
           id: 'model_step1',
           label: '1단계: 통제변수 모형',
-          checked: true,
+          checked: false,
           description: '통제변수만 포함한 기저 모형을 추정합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -3096,7 +3118,7 @@ print(f"\\nR\\u00b2 = {model1.rsquared:.4f}")`,
         {
           id: 'model_step2',
           label: '2단계: 핵심 독립변수 추가',
-          checked: true,
+          checked: false,
           description: '핵심 독립변수를 추가하고 R-squared 변화량을 확인합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -3137,7 +3159,7 @@ print(f"F change = {f_change:.4f}, p = {p_change:.4f}")`,
         {
           id: 'model_comparison',
           label: '모형 비교 (delta-R-squared 종합)',
-          checked: true,
+          checked: false,
           description: '모든 단계의 R-squared 변화와 F 검정 결과를 종합합니다.',
           code: `import statsmodels.api as sm
 import pandas as pd
@@ -3192,7 +3214,7 @@ for name, m in models:
         {
           id: 'visualization_hierarchical',
           label: 'R-squared 변화 시각화',
-          checked: true,
+          checked: false,
           description: '각 단계별 R-squared 변화를 막대그래프로 시각화합니다.',
           code: `import matplotlib.pyplot as plt
 import statsmodels.api as sm
