@@ -13,6 +13,8 @@ import { initPyodide, isPyodideReady } from './pyodide-runner.js';
 
 /** @type {string} 로컬 스토리지 키 */
 const STORAGE_KEY = 'rma_api_key';
+const STORAGE_KEYS = ['rma_api_key_1', 'rma_api_key_2', 'rma_api_key_3'];
+let currentKeyIndex = 0;
 
 /**
  * 앱 초기화
@@ -24,6 +26,10 @@ function init() {
 
   // ===== API 키 UI 초기화 =====
   initApiKeyUI();
+
+  // agents.js에서 키 전환 접근할 수 있도록 전역 등록
+  window._rmaGetApiKey = getApiKey;
+  window._rmaSwitchToNextKey = switchToNextKey;
 
   // ===== PDF 업로드 버튼 =====
   if (uploadBtn && pdfFileInput) {
@@ -68,23 +74,28 @@ function init() {
 }
 
 /**
- * API 키 UI 초기화 — 토글, 저장, 상태 표시
+ * API 키 UI 초기화 — 멀티 키 (최대 3개) 토글, 저장, 상태 표시
  */
 function initApiKeyUI() {
   const toggleBtn = document.getElementById('api-key-toggle');
   const body = document.getElementById('api-key-body');
-  const saveBtn = document.getElementById('save-key-btn');
-  const input = document.getElementById('api-key-input');
-  const statusEl = document.getElementById('api-key-status');
 
-  // URL 파라미터에서 키 가져와 저장
+  // URL 파라미터에서 키 가져와 첫 슬롯에 저장
   const params = new URLSearchParams(window.location.search);
   const urlKey = params.get('key') || params.get('apiKey') || params.get('api_key');
   if (urlKey) {
-    try { localStorage.setItem(STORAGE_KEY, urlKey); } catch { /* 무시 */ }
+    try { localStorage.setItem(STORAGE_KEYS[0], urlKey); } catch { /* 무시 */ }
   }
 
-  // 현재 저장된 키 상태 표시
+  // 레거시 단일 키 → 슬롯1로 마이그레이션
+  try {
+    const legacyKey = localStorage.getItem(STORAGE_KEY);
+    if (legacyKey && !localStorage.getItem(STORAGE_KEYS[0])) {
+      localStorage.setItem(STORAGE_KEYS[0], legacyKey);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch { /* 무시 */ }
+
   updateApiKeyStatus();
 
   // 토글 버튼
@@ -93,45 +104,60 @@ function initApiKeyUI() {
       const isHidden = body.style.display === 'none';
       body.style.display = isHidden ? 'block' : 'none';
       toggleBtn.textContent = isHidden ? '닫기' : '설정';
-      // 기존 키가 있으면 마스킹 표시
-      if (isHidden && input) {
-        const savedKey = getApiKey();
-        if (savedKey) {
-          input.placeholder = '저장됨: ' + savedKey.slice(0, 6) + '...' + savedKey.slice(-4);
-        }
-      }
+      if (isHidden) refreshKeyInputPlaceholders();
     });
   }
 
-  // 저장 버튼
-  if (saveBtn && input) {
-    saveBtn.addEventListener('click', () => saveApiKeyFromInput());
-    input.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') saveApiKeyFromInput();
-    });
+  // 각 슬롯의 저장 버튼 바인딩
+  for (let i = 0; i < 3; i++) {
+    const saveBtn = document.getElementById(`save-key-btn-${i}`);
+    const input = document.getElementById(`api-key-input-${i}`);
+    if (saveBtn && input) {
+      saveBtn.addEventListener('click', () => saveApiKeySlot(i));
+      input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') saveApiKeySlot(i);
+      });
+    }
   }
 }
 
 /**
- * API 키 입력 필드에서 키 저장
+ * 슬롯별 API 키 저장
  */
-function saveApiKeyFromInput() {
-  const input = document.getElementById('api-key-input');
-  const body = document.getElementById('api-key-body');
-  const toggleBtn = document.getElementById('api-key-toggle');
-
+function saveApiKeySlot(slotIndex) {
+  const input = document.getElementById(`api-key-input-${slotIndex}`);
   if (!input) return;
+
   const key = input.value.trim();
   if (!key) {
-    ui.showStatus('API 키를 입력해주세요.');
-    return;
+    // 빈 값 → 슬롯 삭제
+    try { localStorage.removeItem(STORAGE_KEYS[slotIndex]); } catch { /* 무시 */ }
+  } else {
+    try { localStorage.setItem(STORAGE_KEYS[slotIndex], key); } catch { /* 무시 */ }
   }
-
-  try { localStorage.setItem(STORAGE_KEY, key); } catch { /* 무시 */ }
   input.value = '';
-  if (body) body.style.display = 'none';
-  if (toggleBtn) toggleBtn.textContent = '설정';
+  refreshKeyInputPlaceholders();
   updateApiKeyStatus();
+}
+
+/**
+ * 키 입력 필드 placeholder 업데이트
+ */
+function refreshKeyInputPlaceholders() {
+  for (let i = 0; i < 3; i++) {
+    const input = document.getElementById(`api-key-input-${i}`);
+    if (!input) continue;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS[i]);
+      if (saved) {
+        input.placeholder = `저장됨: ${saved.slice(0, 6)}...${saved.slice(-4)}`;
+      } else {
+        input.placeholder = `API 키 ${i + 1} 입력`;
+      }
+    } catch {
+      input.placeholder = `API 키 ${i + 1} 입력`;
+    }
+  }
 }
 
 /**
@@ -141,9 +167,11 @@ function updateApiKeyStatus() {
   const statusEl = document.getElementById('api-key-status');
   if (!statusEl) return;
 
-  const key = getApiKey();
-  if (key) {
-    statusEl.textContent = `✅ 저장됨 (${key.slice(0, 4)}...${key.slice(-4)})`;
+  const keys = getAllApiKeys();
+  const count = keys.length;
+  if (count > 0) {
+    const active = keys[0];
+    statusEl.textContent = `✅ ${count}개 키 (활성: ${active.slice(0, 4)}...${active.slice(-4)})`;
     statusEl.className = 'api-key-status has-key';
   } else {
     statusEl.textContent = '❌ 미설정';
@@ -152,18 +180,50 @@ function updateApiKeyStatus() {
 }
 
 /**
- * API 키 가져오기 (URL 파라미터 → 로컬 스토리지)
+ * 저장된 모든 API 키 목록 반환 (빈 슬롯 제외)
+ */
+function getAllApiKeys() {
+  const keys = [];
+  for (const sk of STORAGE_KEYS) {
+    try {
+      const k = localStorage.getItem(sk);
+      if (k && k.trim()) keys.push(k.trim());
+    } catch { /* 무시 */ }
+  }
+  return keys;
+}
+
+/**
+ * 현재 활성 API 키 가져오기
+ * 429 에러 시 switchToNextKey()로 인덱스 전환 후 재호출됨
  * @returns {string}
  */
 function getApiKey() {
-  const params = new URLSearchParams(window.location.search);
-  const urlKey = params.get('key') || params.get('apiKey') || params.get('api_key');
-  if (urlKey) {
-    try { localStorage.setItem(STORAGE_KEY, urlKey); } catch { /* 무시 */ }
-    return urlKey;
-  }
-  try { return localStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; }
+  const keys = getAllApiKeys();
+  if (keys.length === 0) return '';
+  // 인덱스가 범위를 벗어나면 리셋
+  if (currentKeyIndex >= keys.length) currentKeyIndex = 0;
+  return keys[currentKeyIndex];
 }
+
+/**
+ * 다음 API 키로 전환 (429 에러 시 호출)
+ * @returns {string|null} 다음 키 또는 null (더 이상 키 없음)
+ */
+function switchToNextKey() {
+  const keys = getAllApiKeys();
+  if (keys.length <= 1) return null;
+  const prevIndex = currentKeyIndex;
+  currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+  // 모든 키를 한 바퀴 돌았으면 null
+  if (currentKeyIndex === 0 && prevIndex === keys.length - 1) return null;
+  const nextKey = keys[currentKeyIndex];
+  console.log(`[API 키 전환] 키${prevIndex + 1} → 키${currentKeyIndex + 1} (${nextKey.slice(0, 4)}...${nextKey.slice(-4)})`);
+  updateApiKeyStatus();
+  return nextKey;
+}
+
+// (전역 등록은 init() 안에서 수행)
 
 /**
  * PDF 파일 선택 시 처리

@@ -22,6 +22,7 @@ import {
   extractRegressionAndBuildCorr,
   runReviewGuide,
   runQnA,
+  runCodeAssistant,
   createAbortController,
   abortPipeline,
 } from './agents.js';
@@ -486,6 +487,19 @@ export async function sendQnA(question) {
  * 파이프라인 취소 (agents.js에서 import 후 re-export)
  */
 export { abortPipeline };
+
+/**
+ * AI 코드 어시스턴트 호출 (Phase 8-B)
+ * @param {string} currentCode — 현재 코드
+ * @param {string} userRequest — 사용자 자연어 요청
+ * @returns {Promise<{ modifiedCode: string, explanation: string }>}
+ */
+export async function requestCodeAssistant(currentCode, userRequest) {
+  const context = {
+    variables: state.dataStructure?.variables || [],
+  };
+  return runCodeAssistant(state.apiKey, currentCode, userRequest, context);
+}
 
 /**
  * 상태 초기화

@@ -78,7 +78,17 @@ export async function callGemini(apiKey, prompt, maxTokens = 4000, { jsonMode = 
 
   if (!response.ok) {
     const status = response.status;
-    if (status === 429) throw new Error('API 호출 한도 초과 — 잠시 후 다시 시도해주세요.');
+    if (status === 429) {
+      // 멀티 키 로테이션: 다음 키로 전환 시도
+      if (typeof window._rmaSwitchToNextKey === 'function') {
+        const nextKey = window._rmaSwitchToNextKey();
+        if (nextKey) {
+          console.warn(`[callGemini] 429 한도초과 → 키 전환하여 재시도`);
+          return callGemini(nextKey, prompt, maxTokens, { jsonMode, responseSchema });
+        }
+      }
+      throw new Error('API 호출 한도 초과 — 모든 키가 소진되었습니다. 잠시 후 다시 시도해주세요.');
+    }
     if (status === 401 || status === 403) throw new Error('API 키가 유효하지 않습니다. 키를 확인해주세요.');
     throw new Error(`API 오류 (HTTP ${status}): ${response.statusText}`);
   }
@@ -151,7 +161,17 @@ export async function callGeminiWithPdf(apiKey, pdfBase64, prompt, maxTokens = 8
 
   if (!response.ok) {
     const status = response.status;
-    if (status === 429) throw new Error('API 호출 한도 초과 — 잠시 후 다시 시도해주세요.');
+    if (status === 429) {
+      // 멀티 키 로테이션: 다음 키로 전환 시도
+      if (typeof window._rmaSwitchToNextKey === 'function') {
+        const nextKey = window._rmaSwitchToNextKey();
+        if (nextKey) {
+          console.warn(`[callGeminiWithPdf] 429 한도초과 → 키 전환하여 재시도`);
+          return callGeminiWithPdf(nextKey, pdfBase64, prompt, maxTokens, { jsonMode, responseSchema });
+        }
+      }
+      throw new Error('API 호출 한도 초과 — 모든 키가 소진되었습니다. 잠시 후 다시 시도해주세요.');
+    }
     if (status === 401 || status === 403) throw new Error('API 키가 유효하지 않습니다. 키를 확인해주세요.');
     // 413: payload too large — PDF 크기 초과
     if (status === 413) throw new Error('PDF 파일이 API 크기 제한을 초과합니다. 더 작은 파일을 사용해주세요.');
@@ -1702,4 +1722,66 @@ ${keyVars.controls ? `[통제변수]: ${keyVars.controls}` : ''}
     alternatives: altMatch ? altMatch[1].trim() : '',
     future: futureMatch ? futureMatch[1].trim() : '',
   };
+}
+
+/* ============================================================
+   Phase 8-B: AI 코드 어시스턴트 — 자연어 코드 수정
+   ============================================================ */
+
+/**
+ * AI 코드 어시스턴트: 사용자의 자연어 요청에 따라 Python 코드 수정
+ *
+ * @param {string} apiKey — Gemini API 키
+ * @param {string} currentCode — 현재 Python 코드
+ * @param {string} userRequest — 사용자의 자연어 수정 요청
+ * @param {Object} context — 분석 컨텍스트 (변수명, 데이터 구조 등)
+ * @returns {Promise<{ modifiedCode: string, explanation: string }>}
+ */
+export async function runCodeAssistant(apiKey, currentCode, userRequest, context = {}) {
+  const variableInfo = context.variables
+    ? `사용 가능한 변수 목록:\n${context.variables.map(v => `- ${v.name_en} (${v.name_kr || ''}, ${v.type || ''}, ${v.role || ''})`).join('\n')}`
+    : '';
+
+  const prompt = `당신은 Python 통계 분석 코드 전문가입니다.
+사용자의 요청에 따라 기존 코드를 수정해주세요.
+
+## 규칙
+1. 반드시 수정된 전체 Python 코드를 반환하세요 (부분이 아닌 전체)
+2. 데이터는 'mock_data.csv'에서 로드합니다: df = pd.read_csv('mock_data.csv')
+3. 결과는 print()로 출력하고, 차트는 plt.show()로 표시합니다
+4. 코드만 포함하고, 마크다운 코드펜스(\`\`\`)는 사용하지 마세요
+5. explanation은 한국어로 1~2줄 간결하게 작성하세요
+
+${variableInfo}
+
+## 현재 코드
+\`\`\`python
+${currentCode}
+\`\`\`
+
+## 사용자 요청
+${userRequest}
+
+## 응답 형식 (JSON)
+{
+  "modifiedCode": "수정된 전체 Python 코드",
+  "explanation": "수정 내용 한국어 설명 (1~2줄)"
+}`;
+
+  const raw = await callGemini(apiKey, prompt, 4000, { jsonMode: true });
+
+  try {
+    const result = JSON.parse(raw);
+    return {
+      modifiedCode: (result.modifiedCode || '').trim(),
+      explanation: result.explanation || '코드가 수정되었습니다.',
+    };
+  } catch {
+    // JSON 파싱 실패 시 원본 텍스트에서 코드 추출 시도
+    const codeMatch = raw.match(/```python\s*([\s\S]*?)```/) || raw.match(/```\s*([\s\S]*?)```/);
+    return {
+      modifiedCode: codeMatch ? codeMatch[1].trim() : raw.trim(),
+      explanation: '코드가 수정되었습니다.',
+    };
+  }
 }

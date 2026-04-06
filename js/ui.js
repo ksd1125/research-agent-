@@ -18,7 +18,8 @@ import {
   getDataStructure,
   getPaperContext,
   getPaperText,
-  resetState
+  resetState,
+  requestCodeAssistant
 } from './pipeline.js';
 import { escapeHtml, escapeCode, copyToClipboard } from './utils.js';
 import { initPyodide, runPython, isPyodideReady } from './pyodide-runner.js';
@@ -479,8 +480,14 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
     currentAnalysisMenu = menu;
     const groups = ['descriptive', 'inferential', 'visualization'];
 
+    // 좌우 분할 레이아웃 시작
+    let html = '<div class="analysis-split-layout">';
+
+    // ── 왼쪽: 메뉴 패널 ──
+    html += '<div class="analysis-menu-pane">';
+
     // 액션 바
-    let html = `<div class="analysis-action-bar">
+    html += `<div class="analysis-action-bar">
       <button class="btn-run-checked" id="btn-run-checked">▶ 선택 항목 실행</button>
       <button class="btn-export-notebook" id="btn-export-notebook">📥 Notebook 내보내기</button>
     </div>`;
@@ -516,8 +523,18 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
     // Pyodide 상태 표시 (전역)
     html += '<div class="pyodide-status" id="pyodide-status-global" style="display:none;"></div>';
 
-    // 결과 영역
-    html += '<div id="analysis-results"></div>';
+    html += '</div>'; // .analysis-menu-pane 끝
+
+    // ── 오른쪽: 결과 패널 ──
+    html += `<div class="analysis-results-pane" id="analysis-results-pane">
+      <div class="results-pane-header">
+        <span class="results-pane-title">📊 분석 결과</span>
+        <button class="btn-clear-results" id="btn-clear-results" title="결과 닫기">✕ 닫기</button>
+      </div>
+      <div id="analysis-results"></div>
+    </div>`;
+
+    html += '</div>'; // .analysis-split-layout 끝
 
     stepsContainer.innerHTML = html;
     setupRibbonHandlers(methodIndex, menu);
@@ -559,6 +576,17 @@ function setupRibbonHandlers(methodIndex, menu) {
       }
     });
   }
+
+  // 결과 닫기 버튼
+  const clearBtn = document.getElementById('btn-clear-results');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      const resultsPane = document.getElementById('analysis-results-pane');
+      const resultsDiv = document.getElementById('analysis-results');
+      if (resultsDiv) resultsDiv.innerHTML = '';
+      if (resultsPane) resultsPane.classList.remove('has-results');
+    });
+  }
 }
 
 async function runCheckedItems(methodIndex, menu) {
@@ -571,6 +599,10 @@ async function runCheckedItems(methodIndex, menu) {
   const resultsDiv = document.getElementById('analysis-results');
   if (!resultsDiv) return;
   resultsDiv.innerHTML = '';
+
+  // 결과 패널 활성화
+  const resultsPane = document.getElementById('analysis-results-pane');
+  if (resultsPane) resultsPane.classList.add('has-results');
 
   const groups = ['descriptive', 'inferential', 'visualization'];
 
@@ -602,6 +634,13 @@ async function runCheckedItems(methodIndex, menu) {
             <textarea class="code-textarea" data-item-id="${item.id}" spellcheck="false">${escapeCode(item.code)}</textarea>
             <button class="btn-rerun-item" data-item-id="${item.id}">🔄 재실행</button>
           </div>
+          <div class="ai-assistant-wrap">
+            <div class="ai-assistant-input-row">
+              <input type="text" class="ai-assistant-input" data-item-id="${item.id}" placeholder="💬 코드 수정 요청 (예: 통제변수에서 firm_age 빼줘)">
+              <button class="btn-ai-assist" data-item-id="${item.id}">✨ AI 수정</button>
+            </div>
+            <div class="ai-assistant-msg" data-item-id="${item.id}"></div>
+          </div>
         </details>
       </div>`;
     resultsDiv.appendChild(accDiv);
@@ -629,6 +668,39 @@ async function runCheckedItems(methodIndex, menu) {
         statusEl.textContent = '❌';
       }
     });
+
+    // AI 어시스턴트 버튼
+    const aiBtn = accDiv.querySelector(`.btn-ai-assist[data-item-id="${item.id}"]`);
+    const aiInput = accDiv.querySelector(`.ai-assistant-input[data-item-id="${item.id}"]`);
+    const aiMsg = accDiv.querySelector(`.ai-assistant-msg[data-item-id="${item.id}"]`);
+    if (aiBtn && aiInput) {
+      const handleAiRequest = async () => {
+        const request = aiInput.value.trim();
+        if (!request) { aiInput.focus(); return; }
+        const textarea = accDiv.querySelector(`.code-textarea[data-item-id="${item.id}"]`);
+        const currentCode = textarea ? textarea.value : item.code;
+        aiBtn.disabled = true;
+        aiBtn.textContent = '⏳ 수정 중...';
+        if (aiMsg) aiMsg.innerHTML = '<span class="ai-loading">🤖 AI가 코드를 수정하고 있습니다...</span>';
+        try {
+          const result = await requestCodeAssistant(currentCode, request);
+          if (result.modifiedCode && textarea) {
+            textarea.value = result.modifiedCode;
+          }
+          if (aiMsg) aiMsg.innerHTML = `<span class="ai-success">✅ ${escapeHtml(result.explanation)}</span>`;
+          aiInput.value = '';
+        } catch (e) {
+          if (aiMsg) aiMsg.innerHTML = `<span class="ai-error">❌ ${escapeHtml(e.message)}</span>`;
+        } finally {
+          aiBtn.disabled = false;
+          aiBtn.textContent = '✨ AI 수정';
+        }
+      };
+      aiBtn.addEventListener('click', handleAiRequest);
+      aiInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleAiRequest();
+      });
+    }
 
     // Python 실행
     const resultEl = accDiv.querySelector('.item-result');
