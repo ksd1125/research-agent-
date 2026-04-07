@@ -1,25 +1,34 @@
 /**
  * main.js — 앱 초기화 및 이벤트 바인딩
- * ResearchMethodAgent v5.0
+ * ResearchMethodAgent v6.0
  *
- * 역할: PDF 업로드, API 키 관리, 분석 시작 트리거
- * 결과 화면의 탭/버튼 이벤트는 ui.js의 renderInitialResult() 내에서 바인딩됨
+ * 역할: 홈 화면 경로 분기, PDF 업로드, API 키 관리, 분석 시작 트리거
+ * 경로 A: 논문 실습 (기존 v5.0)
+ * 경로 B: 방법론 학습 (v6.0 신규)
  */
 
 import * as ui from './ui.js';
 import { processPdfFile, extractTextFromPDF, getExtractedText, getPdfBase64, resetExtractedText } from './pdf.js';
 import { runInitialPipeline } from './pipeline.js';
 import { initPyodide, isPyodideReady } from './pyodide-runner.js';
+import { METHODOLOGY_CATALOG, METHODOLOGY_GROUPS, getCatalogByGroup, searchCatalog, getCatalogItem } from './catalog.js';
+import { initChat, showMethodologyOverview } from './ui-chat.js';
 
 /** @type {string} 로컬 스토리지 키 */
 const STORAGE_KEY = 'rma_api_key';
 const STORAGE_KEYS = ['rma_api_key_1', 'rma_api_key_2', 'rma_api_key_3'];
 let currentKeyIndex = 0;
 
+/** @type {'home'|'path-a'|'path-b-catalog'|'path-b-learn'} 현재 화면 상태 */
+let currentScreen = 'home';
+
 /**
  * 앱 초기화
  */
 function init() {
+  // ===== 홈 화면 경로 분기 =====
+  initHomeScreen();
+
   const pdfFileInput = document.getElementById('pdf-file');
   const uploadBtn = document.getElementById('upload-btn');
   const analyzeBtn = document.getElementById('analyze-btn');
@@ -71,6 +80,240 @@ function init() {
     }
   }, 5000);
 
+}
+
+// ============================================================
+// 홈 화면 & 경로 분기 (v6.0)
+// ============================================================
+
+/**
+ * 화면 전환
+ * @param {'home'|'path-a'|'path-b-catalog'|'path-b-learn'} screen
+ */
+function navigateTo(screen) {
+  currentScreen = screen;
+  const homeScreen = document.getElementById('home-screen');
+  const pathAWrap = document.getElementById('path-a-wrap');
+  const pathBWrap = document.getElementById('path-b-wrap');
+  const catalogScreen = document.getElementById('catalog-screen');
+  const learnScreen = document.getElementById('learn-screen');
+
+  // 모두 숨김
+  if (homeScreen) homeScreen.style.display = 'none';
+  if (pathAWrap) pathAWrap.style.display = 'none';
+  if (pathBWrap) pathBWrap.style.display = 'none';
+
+  // Path B에서는 넓은 레이아웃
+  const isWide = screen.startsWith('path-b');
+  document.body.classList.toggle('wide-mode', isWide);
+
+  switch (screen) {
+    case 'home':
+      if (homeScreen) homeScreen.style.display = 'block';
+      break;
+    case 'path-a':
+      if (pathAWrap) pathAWrap.style.display = 'block';
+      break;
+    case 'path-b-catalog':
+      if (pathBWrap) pathBWrap.style.display = 'block';
+      if (catalogScreen) catalogScreen.style.display = 'block';
+      if (learnScreen) learnScreen.style.display = 'none';
+      break;
+    case 'path-b-learn':
+      if (pathBWrap) pathBWrap.style.display = 'block';
+      if (catalogScreen) catalogScreen.style.display = 'none';
+      if (learnScreen) learnScreen.style.display = 'flex';
+      break;
+  }
+}
+
+/**
+ * 홈 화면 초기화 — 경로 선택 버튼 바인딩
+ */
+function initHomeScreen() {
+  const pathABtn = document.getElementById('path-a-btn');
+  const pathBBtn = document.getElementById('path-b-btn');
+  const pathBHomeBtn = document.getElementById('path-b-home-btn');
+  const backCatalogBtn = document.getElementById('back-catalog-btn');
+
+  if (pathABtn) {
+    pathABtn.addEventListener('click', () => navigateTo('path-a'));
+  }
+  if (pathBBtn) {
+    pathBBtn.addEventListener('click', () => {
+      navigateTo('path-b-catalog');
+      renderCatalog();
+    });
+  }
+  if (pathBHomeBtn) {
+    pathBHomeBtn.addEventListener('click', () => navigateTo('home'));
+  }
+  if (backCatalogBtn) {
+    backCatalogBtn.addEventListener('click', () => navigateTo('path-b-catalog'));
+  }
+
+  // "← 새 논문 분석하기" 버튼 → 홈으로
+  document.querySelectorAll('.home-link').forEach(btn => {
+    btn.addEventListener('click', () => navigateTo('home'));
+  });
+
+  // 카탈로그 검색
+  const searchInput = document.getElementById('catalog-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      renderCatalog(searchInput.value);
+    });
+  }
+
+  // 자유 질의 시작
+  const freeInput = document.getElementById('catalog-free-input');
+  const freeSend = document.getElementById('catalog-free-send');
+  if (freeSend && freeInput) {
+    const startFreeChat = () => {
+      const query = freeInput.value.trim();
+      if (!query) return;
+      enterLearnScreen(null, query);
+    };
+    freeSend.addEventListener('click', startFreeChat);
+    freeInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') startFreeChat();
+    });
+  }
+
+  // 방법론 드롭다운 변경
+  const methodSelect = document.getElementById('learn-method-select');
+  if (methodSelect) {
+    methodSelect.addEventListener('change', () => {
+      const item = getCatalogItem(methodSelect.value);
+      if (item) {
+        document.getElementById('learn-topbar-title').textContent = `${item.icon} ${item.title}`;
+        // TODO: Phase 2에서 Q&A 컨텍스트 전환
+      }
+    });
+  }
+}
+
+/**
+ * 카탈로그 그리드 렌더링
+ * @param {string} [query] - 검색어
+ */
+function renderCatalog(query) {
+  const grid = document.getElementById('catalog-grid');
+  if (!grid) return;
+
+  const items = query ? searchCatalog(query) : METHODOLOGY_CATALOG;
+  const grouped = {};
+  for (const item of items) {
+    if (!grouped[item.group]) grouped[item.group] = [];
+    grouped[item.group].push(item);
+  }
+
+  let html = '';
+  for (const [groupId, groupItems] of Object.entries(grouped)) {
+    const groupMeta = METHODOLOGY_GROUPS[groupId];
+    html += `<div class="catalog-group">
+      <div class="catalog-group-label">${groupMeta.icon} ${groupMeta.label}</div>
+      <div class="catalog-group-cards">`;
+    for (const item of groupItems) {
+      const diffClass = `diff-${item.difficulty}`;
+      html += `<button class="catalog-card ${diffClass}" data-id="${item.id}">
+        <span class="catalog-card-icon">${item.icon}</span>
+        <span class="catalog-card-title">${item.title}</span>
+        <span class="catalog-card-subtitle">${item.subtitle}</span>
+        <span class="catalog-card-desc">${item.description}</span>
+      </button>`;
+    }
+    html += `</div></div>`;
+  }
+  grid.innerHTML = html;
+
+  // 카드 클릭 이벤트
+  grid.querySelectorAll('.catalog-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const id = card.dataset.id;
+      enterLearnScreen(id);
+    });
+  });
+}
+
+/**
+ * 학습 화면 진입
+ * @param {string|null} categoryId - 선택된 방법론 ID (null이면 자유 질의)
+ * @param {string} [freeQuery] - 자유 질의 텍스트
+ */
+function enterLearnScreen(categoryId, freeQuery) {
+  // 방법론 드롭다운 채우기
+  const select = document.getElementById('learn-method-select');
+  if (select) {
+    select.innerHTML = METHODOLOGY_CATALOG.map(m =>
+      `<option value="${m.id}" ${m.id === categoryId ? 'selected' : ''}>${m.icon} ${m.title}</option>`
+    ).join('');
+  }
+
+  // 상단 바 제목
+  const titleEl = document.getElementById('learn-topbar-title');
+  if (categoryId) {
+    const item = getCatalogItem(categoryId);
+    if (titleEl && item) titleEl.textContent = `${item.icon} ${item.title}`;
+  } else {
+    if (titleEl) titleEl.textContent = '🎓 방법론 학습';
+  }
+
+  // 초기 환영 메시지
+  const chatMessages = document.getElementById('learn-chat-messages');
+  if (chatMessages) {
+    if (categoryId) {
+      const item = getCatalogItem(categoryId);
+      chatMessages.innerHTML = `
+        <div class="chat-bubble chat-ai">
+          <strong>${item.icon} ${item.title} (${item.subtitle})</strong>에 대해 학습을 시작합니다!<br><br>
+          ${item.description}<br><br>
+          궁금한 점을 자유롭게 질문하거나, 아래 빠른 도구 버튼을 사용해보세요.
+        </div>`;
+    } else if (freeQuery) {
+      chatMessages.innerHTML = `
+        <div class="chat-bubble chat-user">${freeQuery}</div>
+        <div class="chat-bubble chat-ai">
+          질문을 분석하고 있습니다... 잠시만 기다려주세요.
+        </div>`;
+    }
+  }
+
+  // 결과 영역 초기화
+  const resultBody = document.getElementById('learn-result-body');
+  if (resultBody) {
+    resultBody.innerHTML = '<div class="learn-empty-state">코드를 실행하면 결과가 여기에 표시됩니다</div>';
+  }
+
+  // 코드 편집기 초기화
+  const codeEditor = document.getElementById('learn-code-editor');
+  if (codeEditor) codeEditor.value = '';
+
+  navigateTo('path-b-learn');
+
+  // 채팅 모듈 초기화
+  const item = categoryId ? getCatalogItem(categoryId) : null;
+  initChat(categoryId, item?.title);
+
+  // 방법론 개요 자동 생성 (API 키 있으면 Gemini로)
+  if (item) {
+    showMethodologyOverview(categoryId, {
+      id: item.id,
+      title: item.title,
+      subtitle: item.subtitle,
+      description: item.description,
+    });
+  }
+
+  // 자유 질의가 있으면 Gemini로 전송
+  if (freeQuery && !categoryId) {
+    // 채팅 모듈이 초기화된 후 자유 질의 처리
+    const chatInput = document.getElementById('learn-chat-input');
+    if (chatInput) {
+      chatInput.value = freeQuery;
+      document.getElementById('learn-chat-send')?.click();
+    }
+  }
 }
 
 /**

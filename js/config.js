@@ -5,7 +5,7 @@
 
 export const APP = {
   name: 'ResearchMethodAgent',
-  version: '5.0',
+  version: '6.0',
   model: 'gemini-2.5-flash',
 };
 
@@ -24,6 +24,9 @@ export const API = {
     interpretation: 8000, // Peer Reviewer 3파트 구조를 위해 증가
     review: 16000,       // v5: 리뷰 & 대안 방법론 3파트 (8000→16000: 3섹션 모두 생성되도록 증가)
     simulation: 4000,    // v5: Gemini 결과 시뮬레이션
+    methodologyChat: 4000, // v6: 방법론 학습 Q&A 대화
+    methodologyOverview: 3000, // v6: 방법론 개요 생성
+    codeGenFromChat: 2000, // v6: 채팅 기반 코드 생성
   },
   /** 감지할 최대 방법론 수 */
   maxMethods: 3,

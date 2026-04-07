@@ -463,6 +463,592 @@ function setupLanguageToggleHandlers() {
 /** 현재 분석 메뉴 캐시 (리본 UI에서 사용) */
 let currentAnalysisMenu = null;
 
+/** Quick Analysis 도구 — 범용 + 연구유형별 분석 메뉴 */
+function getQuickAnalysisTools(category) {
+  const base = getBaseQuickTools();
+  const extra = getCategoryQuickTools(category || 'regression');
+  // 병합: 기본 + 카테고리별 추가
+  return {
+    descriptive: [...base.descriptive, ...(extra.descriptive || [])],
+    inferential: [...base.inferential, ...(extra.inferential || [])],
+    visualization: [...base.visualization, ...(extra.visualization || [])],
+  };
+}
+
+/** 연구 유형별 추가 도구 */
+function getCategoryQuickTools(category) {
+  switch (category) {
+    case 'unstructured_data':
+      return {
+        descriptive: [
+          { id: 'qt_wordfreq', label: '단어 빈도 분석', code: `import pandas as pd
+from collections import Counter
+import re
+df = pd.read_csv('mock_data.csv')
+text_cols = df.select_dtypes(include='object').columns.tolist()
+if not text_cols:
+    print("텍스트 변수가 없습니다.")
+else:
+    col = text_cols[0]
+    all_text = ' '.join(df[col].dropna().astype(str))
+    words = re.findall(r'\\w+', all_text.lower())
+    freq = Counter(words).most_common(30)
+    print(f"=== {col} 상위 30개 단어 빈도 ===")
+    for w, c in freq:
+        print(f"  {w}: {c}")` },
+          { id: 'qt_textlen', label: '텍스트 길이 분포', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+text_cols = df.select_dtypes(include='object').columns.tolist()
+for col in text_cols[:3]:
+    lengths = df[col].dropna().astype(str).str.len()
+    print(f"=== {col} 텍스트 길이 ===")
+    print(f"  평균: {lengths.mean():.1f}, 중앙값: {lengths.median():.0f}, 최대: {lengths.max()}")` },
+        ],
+        visualization: [
+          { id: 'qt_wordcloud', label: '워드클라우드', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+from collections import Counter
+import re
+df = pd.read_csv('mock_data.csv')
+text_cols = df.select_dtypes(include='object').columns.tolist()
+if not text_cols:
+    print("텍스트 변수가 없습니다.")
+else:
+    col = text_cols[0]
+    all_text = ' '.join(df[col].dropna().astype(str))
+    words = re.findall(r'\\w+', all_text.lower())
+    freq = Counter(words).most_common(50)
+    # 빈도 기반 바 차트 (워드클라우드 대체)
+    top20 = freq[:20]
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.barh([w for w,c in reversed(top20)], [c for w,c in reversed(top20)], color='#3498db')
+    ax.set_xlabel('빈도')
+    ax.set_title(f'{col} - 상위 20 단어')
+    plt.tight_layout()
+    plt.savefig('wordfreq.png', dpi=100, bbox_inches='tight')
+    plt.show()` },
+        ],
+      };
+
+    case 'time_series':
+      return {
+        inferential: [
+          { id: 'qt_adf', label: '정상성 검정 (ADF)', code: `import pandas as pd
+from scipy import stats
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+print("=== ADF 단위근 검정 (Augmented Dickey-Fuller) ===")
+try:
+    from statsmodels.tsa.stattools import adfuller
+    for col in num_cols[:5]:
+        series = df[col].dropna()
+        result = adfuller(series, autolag='AIC')
+        sig = "정상" if result[1] < 0.05 else "비정상"
+        print(f"{col}: ADF={result[0]:.3f}, p={result[1]:.4f} → {sig}")
+except ImportError:
+    print("statsmodels 패키지가 필요합니다.")` },
+          { id: 'qt_acf', label: '자기상관 분석 (ACF)', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+try:
+    from statsmodels.graphics.tsaplots import plot_acf
+    n = min(len(num_cols), 4)
+    fig, axes = plt.subplots(1, n, figsize=(5*n, 3))
+    if n == 1: axes = [axes]
+    for i in range(n):
+        plot_acf(df[num_cols[i]].dropna(), ax=axes[i], lags=20)
+        axes[i].set_title(num_cols[i])
+    plt.tight_layout()
+    plt.savefig('acf.png', dpi=100, bbox_inches='tight')
+    plt.show()
+except ImportError:
+    print("statsmodels 패키지가 필요합니다.")` },
+        ],
+        visualization: [
+          { id: 'qt_lineplot', label: '시계열 선 그래프', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+time_col = next((c for c in ['year','time','date','quarter'] if c in df.columns), None)
+plot_cols = [c for c in num_cols if c not in id_cols][:4]
+if time_col:
+    grouped = df.groupby(time_col)[plot_cols].mean()
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for col in plot_cols:
+        ax.plot(grouped.index, grouped[col], marker='o', label=col)
+    ax.set_xlabel(time_col)
+    ax.legend()
+    ax.set_title('시계열 추이')
+    plt.tight_layout()
+    plt.savefig('timeseries.png', dpi=100, bbox_inches='tight')
+    plt.show()
+else:
+    print("시간 변수(year/time/date)를 찾을 수 없습니다.")` },
+        ],
+      };
+
+    case 'causal_inference':
+      return {
+        inferential: [
+          { id: 'qt_fe', label: '고정효과 모형 (Fixed Effects)', code: `import pandas as pd
+import statsmodels.api as sm
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+y_col = [c for c in num_cols if c not in id_cols][0]
+x_cols = [c for c in num_cols if c not in id_cols and c != y_col][:3]
+if 'entity_id' in df.columns:
+    dummies = pd.get_dummies(df['entity_id'], prefix='fe', drop_first=True, dtype=float)
+    X = pd.concat([df[x_cols].astype(float), dummies], axis=1)
+    X = sm.add_constant(X)
+    model = sm.OLS(df[y_col].astype(float), X).fit()
+    print(f"=== 고정효과 모형: {y_col} ~ {' + '.join(x_cols)} + entity FE ===")
+    print(model.summary().tables[1])
+else:
+    print("패널 데이터(entity_id)가 없어 고정효과 모형을 적용할 수 없습니다.")` },
+          { id: 'qt_did', label: 'DID (이중차분법)', code: `import pandas as pd
+import statsmodels.api as sm
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+y_col = [c for c in num_cols if c not in id_cols][0]
+cat_cols = df.select_dtypes(include=['object','category']).columns.tolist()
+if cat_cols and 'year' in df.columns:
+    treat_col = cat_cols[0]
+    groups = df[treat_col].unique()[:2]
+    mid_year = df['year'].median()
+    df['_treat'] = (df[treat_col] == groups[0]).astype(int)
+    df['_post'] = (df['year'] >= mid_year).astype(int)
+    df['_did'] = df['_treat'] * df['_post']
+    X = sm.add_constant(df[['_treat','_post','_did']].astype(float))
+    model = sm.OLS(df[y_col].astype(float), X).fit()
+    print(f"=== DID: {y_col} ~ treat + post + treat×post ===")
+    print(model.summary().tables[1])
+else:
+    print("DID 분석을 위한 그룹/시간 변수가 부족합니다.")` },
+        ],
+      };
+
+    case 'machine_learning':
+    case 'causal_ml':
+      return {
+        inferential: [
+          { id: 'qt_rf_importance', label: '변수 중요도 (Random Forest)', code: `import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore').dropna()
+if num_df.shape[1] < 2:
+    print("수치형 변수가 2개 이상 필요합니다.")
+else:
+    y = num_df.iloc[:, 0]
+    X = num_df.iloc[:, 1:]
+    rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+    rf.fit(X, y)
+    imp = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
+    print(f"=== 변수 중요도 (종속: {num_df.columns[0]}) ===")
+    for name, val in imp.items():
+        bar = '█' * int(val * 50)
+        print(f"  {name:<20} {val:.4f} {bar}")` },
+        ],
+        visualization: [
+          { id: 'qt_importance_plot', label: '변수 중요도 시각화', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+from sklearn.ensemble import RandomForestRegressor
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore').dropna()
+y = num_df.iloc[:, 0]; X = num_df.iloc[:, 1:]
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+rf.fit(X, y)
+imp = pd.Series(rf.feature_importances_, index=X.columns).sort_values()
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.barh(imp.index, imp.values, color='#2ecc71')
+ax.set_xlabel('Feature Importance')
+ax.set_title(f'Random Forest — {num_df.columns[0]} 예측')
+plt.tight_layout()
+plt.savefig('importance.png', dpi=100, bbox_inches='tight')
+plt.show()` },
+        ],
+      };
+
+    case 'sem':
+      return {
+        inferential: [
+          { id: 'qt_cfa', label: '확인적 요인분석 (CFA)', code: `import pandas as pd
+import numpy as np
+from numpy.linalg import eig
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore').dropna()
+corr = num_df.corr()
+eigenvalues, eigenvectors = eig(corr.values)
+eigenvalues = np.sort(eigenvalues)[::-1]
+cumvar = np.cumsum(eigenvalues / eigenvalues.sum() * 100)
+print("=== 주성분 분석 (고유값 기반) ===")
+print(f"{'성분':>6} {'고유값':>10} {'분산비율(%)':>12} {'누적(%)':>10}")
+for i, (ev, cv) in enumerate(zip(eigenvalues, cumvar)):
+    marker = " ◀" if ev >= 1 else ""
+    print(f"{i+1:>6} {ev:>10.3f} {ev/eigenvalues.sum()*100:>12.2f} {cv:>10.2f}{marker}")` },
+        ],
+      };
+
+    case 'survey':
+    case 'experimental':
+      return {
+        inferential: [
+          { id: 'qt_reliability', label: '신뢰도 분석 (Cronbach α)', code: `import pandas as pd
+import numpy as np
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+k = num_df.shape[1]
+if k < 2:
+    print("Cronbach α 계산에 수치 변수 2개 이상 필요합니다.")
+else:
+    item_vars = num_df.var(axis=0, ddof=1)
+    total_var = num_df.sum(axis=1).var(ddof=1)
+    alpha = (k / (k - 1)) * (1 - item_vars.sum() / total_var)
+    print(f"=== 신뢰도 분석 ===")
+    print(f"항목 수: {k}")
+    print(f"Cronbach's α: {alpha:.4f}")
+    verdict = "우수" if alpha >= 0.9 else "양호" if alpha >= 0.8 else "수용가능" if alpha >= 0.7 else "낮음"
+    print(f"판정: {verdict}")` },
+        ],
+      };
+
+    case 'spatial':
+      return {
+        descriptive: [
+          { id: 'qt_spatial_desc', label: '공간 변수 기술통계', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+geo_cols = [c for c in df.columns if any(k in c.lower() for k in ['lat','lon','lng','x','y','region','city','state'])]
+if not geo_cols:
+    print("공간 관련 변수를 찾을 수 없습니다.")
+    print("전체 변수:", list(df.columns))
+else:
+    print("=== 공간 관련 변수 ===")
+    for col in geo_cols:
+        if df[col].dtype in ['float64','int64']:
+            print(f"\\n{col}: 평균={df[col].mean():.4f}, 범위=[{df[col].min():.4f}, {df[col].max():.4f}]")
+        else:
+            print(f"\\n{col}: {df[col].nunique()}개 고유값")
+            print(df[col].value_counts().head(10))` },
+        ],
+      };
+
+    default:
+      return { descriptive: [], inferential: [], visualization: [] };
+  }
+}
+
+/** 범용 기본 도구 */
+function getBaseQuickTools() {
+  return {
+    descriptive: [
+      { id: 'qt_describe', label: '기본 기술통계 (describe)', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+print(num_df.describe().round(3))` },
+      { id: 'qt_mean_median', label: '평균 & 중앙값', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+print("=== 평균 (Mean) ===")
+print(num_df.mean().round(3))
+print("\\n=== 중앙값 (Median) ===")
+print(num_df.median().round(3))` },
+      { id: 'qt_std_var', label: '표준편차 & 분산', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+print("=== 표준편차 (Std) ===")
+print(num_df.std().round(3))
+print("\\n=== 분산 (Variance) ===")
+print(num_df.var().round(3))` },
+      { id: 'qt_skew_kurt', label: '왜도 & 첨도', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+print("=== 왜도 (Skewness) ===")
+print(num_df.skew().round(3))
+print("\\n=== 첨도 (Kurtosis) ===")
+print(num_df.kurtosis().round(3))` },
+      { id: 'qt_missing', label: '결측치 분석', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+total = len(df)
+missing = df.isnull().sum()
+pct = (missing / total * 100).round(2)
+result = pd.DataFrame({'결측수': missing, '결측률(%)': pct})
+result = result[result['결측수'] > 0].sort_values('결측수', ascending=False)
+if len(result) == 0:
+    print("결측치가 없습니다. (완전 데이터)")
+else:
+    print(f"=== 결측치 현황 (총 {total}행) ===")
+    print(result)` },
+      { id: 'qt_freq', label: '빈도 분석 (범주형)', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+if not cat_cols:
+    print("범주형 변수가 없습니다.")
+else:
+    for col in cat_cols:
+        print(f"\\n=== {col} 빈도표 ===")
+        vc = df[col].value_counts()
+        pct = (vc / len(df) * 100).round(1)
+        freq_df = pd.DataFrame({'빈도': vc, '비율(%)': pct})
+        print(freq_df)` },
+    ],
+    inferential: [
+      { id: 'qt_corr_pearson', label: '피어슨 상관분석', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+corr = num_df.corr(method='pearson').round(3)
+print("=== 피어슨 상관계수 행렬 ===")
+print(corr)` },
+      { id: 'qt_corr_spearman', label: '스피어만 상관분석', code: `import pandas as pd
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+corr = num_df.corr(method='spearman').round(3)
+print("=== 스피어만 상관계수 행렬 ===")
+print(corr)` },
+      { id: 'qt_ttest', label: '독립표본 t-검정', code: `import pandas as pd
+from scipy import stats
+df = pd.read_csv('mock_data.csv')
+# 범주형 변수로 그룹 분리
+cat_cols = df.select_dtypes(include=['object','category']).columns.tolist()
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+if not cat_cols or not num_cols:
+    print("t-검정을 위한 범주형/수치형 변수 조합이 없습니다.")
+else:
+    group_col = cat_cols[0]
+    groups = df[group_col].unique()[:2]
+    print(f"=== 독립표본 t-검정 (그룹: {group_col}) ===")
+    print(f"비교 그룹: {groups[0]} vs {groups[1]}\\n")
+    g1 = df[df[group_col] == groups[0]]
+    g2 = df[df[group_col] == groups[1]]
+    for col in num_cols[:5]:
+        t_stat, p_val = stats.ttest_ind(g1[col].dropna(), g2[col].dropna())
+        sig = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*" if p_val < 0.05 else "n.s."
+        print(f"{col}: t={t_stat:.3f}, p={p_val:.4f} {sig}")` },
+      { id: 'qt_anova', label: '일원분산분석 (ANOVA)', code: `import pandas as pd
+from scipy import stats
+df = pd.read_csv('mock_data.csv')
+cat_cols = df.select_dtypes(include=['object','category']).columns.tolist()
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+if not cat_cols or not num_cols:
+    print("ANOVA를 위한 변수 조합이 없습니다.")
+else:
+    group_col = cat_cols[0]
+    print(f"=== 일원분산분석 (ANOVA, 그룹: {group_col}) ===\\n")
+    groups = [g[1][num_cols[0]].dropna().values for g in df.groupby(group_col)]
+    for col in num_cols[:5]:
+        grp_data = [g[1][col].dropna().values for g in df.groupby(group_col)]
+        f_stat, p_val = stats.f_oneway(*grp_data)
+        sig = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*" if p_val < 0.05 else "n.s."
+        print(f"{col}: F={f_stat:.3f}, p={p_val:.4f} {sig}")` },
+      { id: 'qt_normality', label: '정규성 검정 (Shapiro-Wilk)', code: `import pandas as pd
+from scipy import stats
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+print("=== 정규성 검정 (Shapiro-Wilk) ===")
+print(f"{'변수':<25} {'W통계량':>10} {'p-value':>10} {'판정':>6}")
+print("-" * 55)
+for col in num_df.columns:
+    sample = num_df[col].dropna()
+    if len(sample) > 5000: sample = sample.sample(5000, random_state=42)
+    w, p = stats.shapiro(sample)
+    verdict = "정규" if p >= 0.05 else "비정규"
+    print(f"{col:<25} {w:>10.4f} {p:>10.4f} {verdict:>6}")` },
+      { id: 'qt_chi2', label: '카이제곱 검정', code: `import pandas as pd
+from scipy import stats
+df = pd.read_csv('mock_data.csv')
+cat_cols = df.select_dtypes(include=['object','category']).columns.tolist()
+if len(cat_cols) < 2:
+    print("카이제곱 검정을 위해 범주형 변수가 2개 이상 필요합니다.")
+else:
+    for i in range(len(cat_cols)):
+        for j in range(i+1, min(len(cat_cols), i+4)):
+            ct = pd.crosstab(df[cat_cols[i]], df[cat_cols[j]])
+            chi2, p, dof, expected = stats.chi2_contingency(ct)
+            sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
+            print(f"=== {cat_cols[i]} × {cat_cols[j]} ===")
+            print(f"χ²={chi2:.3f}, df={dof}, p={p:.4f} {sig}")
+            print(ct)
+            print()` },
+    ],
+    visualization: [
+      { id: 'qt_hist', label: '히스토그램', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+n = min(len(num_cols), 6)
+fig, axes = plt.subplots(2, 3, figsize=(12, 7))
+axes = axes.flatten()
+for i in range(n):
+    axes[i].hist(df[num_cols[i]].dropna(), bins=20, edgecolor='black', alpha=0.7)
+    axes[i].set_title(num_cols[i], fontsize=11)
+    axes[i].set_ylabel('빈도')
+for i in range(n, 6): axes[i].set_visible(False)
+plt.tight_layout()
+plt.savefig('hist.png', dpi=100, bbox_inches='tight')
+plt.show()` },
+      { id: 'qt_boxplot', label: '상자 그림 (Box Plot)', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+n = min(len(num_cols), 6)
+fig, axes = plt.subplots(2, 3, figsize=(12, 7))
+axes = axes.flatten()
+for i in range(n):
+    axes[i].boxplot(df[num_cols[i]].dropna(), patch_artist=True,
+                    boxprops=dict(facecolor='#3498db', alpha=0.6))
+    axes[i].set_title(num_cols[i], fontsize=11)
+for i in range(n, 6): axes[i].set_visible(False)
+plt.tight_layout()
+plt.savefig('boxplot.png', dpi=100, bbox_inches='tight')
+plt.show()` },
+      { id: 'qt_scatter', label: '산점도 (주요 변수)', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+if len(num_cols) < 2:
+    print("산점도를 그리려면 수치형 변수가 2개 이상 필요합니다.")
+else:
+    y_col = num_cols[0]
+    x_cols = num_cols[1:min(4, len(num_cols))]
+    fig, axes = plt.subplots(1, len(x_cols), figsize=(5*len(x_cols), 4))
+    if len(x_cols) == 1: axes = [axes]
+    for i, x in enumerate(x_cols):
+        axes[i].scatter(df[x], df[y_col], alpha=0.4, s=15)
+        axes[i].set_xlabel(x)
+        axes[i].set_ylabel(y_col)
+        axes[i].set_title(f'{x} vs {y_col}')
+    plt.tight_layout()
+    plt.savefig('scatter.png', dpi=100, bbox_inches='tight')
+    plt.show()` },
+      { id: 'qt_heatmap', label: '상관 히트맵', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
+df = pd.read_csv('mock_data.csv')
+num_df = df.select_dtypes(include='number')
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_df = num_df.drop(columns=[c for c in id_cols if c in num_df.columns], errors='ignore')
+corr = num_df.corr()
+fig, ax = plt.subplots(figsize=(10, 8))
+im = ax.imshow(corr, cmap='RdBu_r', vmin=-1, vmax=1, aspect='auto')
+ax.set_xticks(range(len(corr.columns)))
+ax.set_yticks(range(len(corr.columns)))
+ax.set_xticklabels(corr.columns, rotation=45, ha='right', fontsize=9)
+ax.set_yticklabels(corr.columns, fontsize=9)
+for i in range(len(corr)):
+    for j in range(len(corr)):
+        ax.text(j, i, f'{corr.iloc[i,j]:.2f}', ha='center', va='center', fontsize=8)
+plt.colorbar(im, ax=ax, label='Correlation')
+plt.title('상관계수 히트맵')
+plt.tight_layout()
+plt.savefig('heatmap.png', dpi=100, bbox_inches='tight')
+plt.show()` },
+      { id: 'qt_bar', label: '막대 그래프 (범주형)', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
+df = pd.read_csv('mock_data.csv')
+cat_cols = df.select_dtypes(include=['object','category']).columns.tolist()
+if not cat_cols:
+    print("범주형 변수가 없습니다.")
+else:
+    n = min(len(cat_cols), 4)
+    fig, axes = plt.subplots(1, n, figsize=(5*n, 4))
+    if n == 1: axes = [axes]
+    for i in range(n):
+        vc = df[cat_cols[i]].value_counts()
+        axes[i].bar(vc.index.astype(str), vc.values, color='#3498db', alpha=0.7, edgecolor='black')
+        axes[i].set_title(cat_cols[i])
+        axes[i].set_ylabel('빈도')
+        axes[i].tick_params(axis='x', rotation=45)
+    plt.tight_layout()
+    plt.savefig('bar.png', dpi=100, bbox_inches='tight')
+    plt.show()` },
+      { id: 'qt_violin', label: '바이올린 플롯', code: `import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['font.family'] = 'NanumGothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
+df = pd.read_csv('mock_data.csv')
+num_cols = df.select_dtypes(include='number').columns.tolist()
+id_cols = ['entity_id', 'year', 'time', 'id', 'ID', 'Unnamed: 0']
+num_cols = [c for c in num_cols if c not in id_cols]
+n = min(len(num_cols), 6)
+fig, axes = plt.subplots(2, 3, figsize=(12, 7))
+axes = axes.flatten()
+for i in range(n):
+    data = df[num_cols[i]].dropna().values
+    vp = axes[i].violinplot(data, showmeans=True, showmedians=True)
+    vp['bodies'][0].set_facecolor('#3498db')
+    vp['bodies'][0].set_alpha(0.6)
+    axes[i].set_title(num_cols[i], fontsize=11)
+for i in range(n, 6): axes[i].set_visible(False)
+plt.tight_layout()
+plt.savefig('violin.png', dpi=100, bbox_inches='tight')
+plt.show()` },
+    ],
+  };
+}
+
 async function loadAndRenderAnalysisSteps(methodIndex) {
   try {
     const stepsContainer = $('practice-steps');
@@ -479,6 +1065,10 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
     const menu = result.steps;
     currentAnalysisMenu = menu;
     const groups = ['descriptive', 'inferential', 'visualization'];
+    // 연구 카테고리 기반 Quick Tools
+    const paperContext = getPaperContext();
+    const analysisCategory = paperContext?.analysis_category || 'regression';
+    const quickTools = getQuickAnalysisTools(analysisCategory);
 
     // ── 2-Panel 레이아웃 ──
     let html = '<div class="analysis-split-layout">';
@@ -500,6 +1090,9 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
       if (!menu[g]) return;
       const active = i === 0 ? ' active' : '';
       html += `<div class="ribbon-panel${active}" data-group="${g}">`;
+
+      // 논문 기반 분석 항목
+      html += '<div class="menu-section-label">📄 논문 분석</div>';
       html += '<div class="checkbox-grid">';
       (menu[g].items || []).forEach(item => {
         const checked = item.checked ? ' checked' : '';
@@ -511,7 +1104,22 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
           <span class="item-label">${escapeHtml(item.label)}</span>${refs}
         </label>`;
       });
-      html += '</div></div>';
+      html += '</div>';
+
+      // Quick Analysis 도구
+      if (quickTools[g] && quickTools[g].length > 0) {
+        html += '<div class="menu-section-label">🧰 분석 도구</div>';
+        html += '<div class="checkbox-grid">';
+        quickTools[g].forEach(item => {
+          html += `<label class="analysis-item quick-tool">
+            <input type="checkbox" data-item-id="${item.id}" data-group="${g}">
+            <span class="item-label">${escapeHtml(item.label)}</span>
+          </label>`;
+        });
+        html += '</div>';
+      }
+
+      html += '</div>';
     });
 
     // 액션 바
@@ -543,19 +1151,22 @@ async function loadAndRenderAnalysisSteps(methodIndex) {
 
     html += '</div>'; // .analysis-menu-pane 끝
 
-    // ══════════ 오른쪽 패널: 탭(Python 결과 / APA Style) ══════════
+    // ══════════ 리사이즈 핸들 ══════════
+    html += '<div class="resize-handle" id="resize-handle" title="드래그하여 패널 크기 조절">⋮</div>';
+
+    // ══════════ 오른쪽 패널: 체크박스 토글(Python / APA) ══════════
     html += `<div class="analysis-results-pane" id="analysis-results-pane">
       <div class="results-pane-header">
-        <div class="results-tab-bar">
-          <button class="results-tab active" data-results-tab="python">🐍 Python 결과</button>
-          <button class="results-tab" data-results-tab="apa">📝 APA Style</button>
+        <div class="results-toggle-bar">
+          <label class="results-toggle"><input type="checkbox" id="toggle-python" checked><span>🐍 Python 결과</span></label>
+          <label class="results-toggle"><input type="checkbox" id="toggle-apa"><span>📝 APA Style</span></label>
         </div>
         <button class="btn-clear-results" id="btn-clear-results" title="결과 닫기">✕ 닫기</button>
       </div>
-      <div class="results-tab-content active" id="results-tab-python">
+      <div class="results-section" id="results-section-python">
         <div id="analysis-results"></div>
       </div>
-      <div class="results-tab-content" id="results-tab-apa">
+      <div class="results-section" id="results-section-apa" style="display:none;">
         <div id="apa-results">
           <div class="apa-empty-state">실행 결과가 없습니다. 항목을 선택하고 실행하면 APA 보고서가 여기에 표시됩니다.</div>
         </div>
@@ -634,17 +1245,24 @@ function setupRibbonHandlers(methodIndex, menu) {
     });
   }
 
-  // 오른쪽 패널 탭 전환 (Python / APA)
-  document.querySelectorAll('.results-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.results-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.results-tab-content').forEach(c => c.classList.remove('active'));
-      tab.classList.add('active');
-      const targetId = `results-tab-${tab.dataset.resultsTab}`;
-      const target = document.getElementById(targetId);
-      if (target) target.classList.add('active');
+  // 오른쪽 패널 체크박스 토글 (Python / APA — 동시 표시 가능)
+  const togglePython = document.getElementById('toggle-python');
+  const toggleApa = document.getElementById('toggle-apa');
+  if (togglePython) {
+    togglePython.addEventListener('change', () => {
+      const section = document.getElementById('results-section-python');
+      if (section) section.style.display = togglePython.checked ? 'block' : 'none';
     });
-  });
+  }
+  if (toggleApa) {
+    toggleApa.addEventListener('change', () => {
+      const section = document.getElementById('results-section-apa');
+      if (section) section.style.display = toggleApa.checked ? 'block' : 'none';
+    });
+  }
+
+  // 리사이즈 핸들
+  setupResizeHandle();
 
   // 코드 편집기 — 재실행 버튼
   const rerunBtn = document.getElementById('btn-rerun-editor');
@@ -682,17 +1300,97 @@ function setupRibbonHandlers(methodIndex, menu) {
   }
 }
 
+/** 좌우 패널 리사이즈 핸들 */
+function setupResizeHandle() {
+  const handle = document.getElementById('resize-handle');
+  const layout = document.querySelector('.analysis-split-layout');
+  const menuPane = document.querySelector('.analysis-menu-pane');
+  if (!handle || !layout || !menuPane) return;
+
+  // 모바일에서는 리사이즈 비활성화
+  if (window.innerWidth < 900) return;
+
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  handle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = menuPane.offsetWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const dx = e.clientX - startX;
+    const newWidth = Math.max(250, Math.min(startWidth + dx, layout.offsetWidth - 300));
+    menuPane.style.flex = `0 0 ${newWidth}px`;
+    menuPane.style.maxWidth = `${newWidth}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isResizing) return;
+    isResizing = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+
+  // 터치 지원
+  handle.addEventListener('touchstart', (e) => {
+    isResizing = true;
+    startX = e.touches[0].clientX;
+    startWidth = menuPane.offsetWidth;
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!isResizing) return;
+    const dx = e.touches[0].clientX - startX;
+    const newWidth = Math.max(250, Math.min(startWidth + dx, layout.offsetWidth - 300));
+    menuPane.style.flex = `0 0 ${newWidth}px`;
+    menuPane.style.maxWidth = `${newWidth}px`;
+  });
+
+  document.addEventListener('touchend', () => {
+    if (!isResizing) return;
+    isResizing = false;
+  });
+}
+
+/** 편집기에서 수정된 코드 캐시 (itemId → code) */
+const editorCodeCache = {};
+
 /** 항목 코드를 왼쪽 편집기에 로드 */
 function loadItemToEditor(itemId, group, menu) {
-  if (!menu[group]) return;
-  const item = (menu[group].items || []).find(it => it.id === itemId);
+  // 현재 편집기에 수정된 코드가 있으면 캐시에 저장
+  if (currentEditorItemId) {
+    const textarea = document.getElementById('code-editor-textarea');
+    if (textarea) editorCodeCache[currentEditorItemId] = textarea.value;
+  }
+
+  // 아이템 정보 찾기 (menu 또는 quickTools)
+  let item = null;
+  if (menu[group]) {
+    item = (menu[group].items || []).find(it => it.id === itemId);
+  }
+  // Quick Tools에서 찾기
+  if (!item) {
+    const qt = getQuickAnalysisTools(getPaperContext()?.analysis_category);
+    if (qt[group]) {
+      item = qt[group].find(it => it.id === itemId);
+    }
+  }
   if (!item) return;
 
   currentEditorItemId = itemId;
   const titleEl = document.getElementById('code-editor-title');
   const textarea = document.getElementById('code-editor-textarea');
   if (titleEl) titleEl.textContent = `💻 ${item.label}`;
-  if (textarea) textarea.value = item.code || '';
+  // 캐시된 수정 코드가 있으면 그것을 사용, 없으면 원본
+  if (textarea) textarea.value = editorCodeCache[itemId] || item.code || '';
 
   // 편집기 섹션 활성화
   const section = document.getElementById('code-editor-section');
@@ -713,18 +1411,18 @@ async function rerunFromEditor(menu) {
   const textarea = document.getElementById('code-editor-textarea');
   if (!textarea) return;
   const editedCode = textarea.value;
+  // 수정된 코드를 캐시에 저장
+  editorCodeCache[currentEditorItemId] = editedCode;
 
   // 결과 패널 활성화
   const resultsPane = document.getElementById('analysis-results-pane');
   if (resultsPane) resultsPane.classList.add('has-results');
 
-  // Python 탭으로 전환
-  document.querySelectorAll('.results-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.results-tab-content').forEach(c => c.classList.remove('active'));
-  const pyTab = document.querySelector('.results-tab[data-results-tab="python"]');
-  const pyContent = document.getElementById('results-tab-python');
-  if (pyTab) pyTab.classList.add('active');
-  if (pyContent) pyContent.classList.add('active');
+  // Python 결과 섹션 표시
+  const pyToggle = document.getElementById('toggle-python');
+  if (pyToggle) pyToggle.checked = true;
+  const pySection = document.getElementById('results-section-python');
+  if (pySection) pySection.style.display = 'block';
 
   // 해당 아코디언 찾기 또는 새로 생성
   let accDiv = document.querySelector(`.result-accordion[data-item-id="${currentEditorItemId}"]`);
@@ -732,11 +1430,12 @@ async function rerunFromEditor(menu) {
     // 아코디언이 없으면 새로 생성
     const resultsDiv = document.getElementById('analysis-results');
     if (!resultsDiv) return;
-    // 메뉴에서 항목 정보 찾기
+    // 메뉴 또는 Quick Tools에서 항목 정보 찾기
     let itemLabel = currentEditorItemId;
+    const qt = getQuickAnalysisTools(getPaperContext()?.analysis_category);
     for (const g of ['descriptive', 'inferential', 'visualization']) {
-      if (!menu[g]) continue;
-      const found = (menu[g].items || []).find(it => it.id === currentEditorItemId);
+      let found = menu[g] && (menu[g].items || []).find(it => it.id === currentEditorItemId);
+      if (!found && qt[g]) found = qt[g].find(it => it.id === currentEditorItemId);
       if (found) { itemLabel = found.label; break; }
     }
     accDiv = document.createElement('div');
@@ -785,25 +1484,33 @@ async function runCheckedItems(methodIndex, menu) {
   resultsDiv.innerHTML = '';
   executionResults = [];
 
-  // 결과 패널 활성화 + Python 탭 전환
+  // 결과 패널 활성화 + Python 섹션 표시
   const resultsPane = document.getElementById('analysis-results-pane');
   if (resultsPane) resultsPane.classList.add('has-results');
-  document.querySelectorAll('.results-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.results-tab-content').forEach(c => c.classList.remove('active'));
-  const pyTab = document.querySelector('.results-tab[data-results-tab="python"]');
-  const pyContent = document.getElementById('results-tab-python');
-  if (pyTab) pyTab.classList.add('active');
-  if (pyContent) pyContent.classList.add('active');
+  const pyToggle = document.getElementById('toggle-python');
+  if (pyToggle) pyToggle.checked = true;
+  const pySection = document.getElementById('results-section-python');
+  if (pySection) pySection.style.display = 'block';
 
   const groups = ['descriptive', 'inferential', 'visualization'];
 
-  // 체크된 아이템을 그룹 순서대로 정렬
+  // 체크된 아이템을 그룹 순서대로 정렬 (논문 분석 + Quick Tools)
+  const quickTools = getQuickAnalysisTools(getPaperContext()?.analysis_category);
   const itemsToRun = [];
   for (const g of groups) {
-    if (!menu[g]) continue;
-    for (const item of menu[g].items) {
-      const cb = document.querySelector(`input[data-item-id="${item.id}"]:checked`);
-      if (cb) itemsToRun.push({ ...item, group: g });
+    // 논문 분석 항목
+    if (menu[g]) {
+      for (const item of menu[g].items) {
+        const cb = document.querySelector(`input[data-item-id="${item.id}"]:checked`);
+        if (cb) itemsToRun.push({ ...item, group: g });
+      }
+    }
+    // Quick Tools 항목
+    if (quickTools[g]) {
+      for (const item of quickTools[g]) {
+        const cb = document.querySelector(`input[data-item-id="${item.id}"]:checked`);
+        if (cb) itemsToRun.push({ ...item, group: g });
+      }
     }
   }
 
@@ -831,11 +1538,12 @@ async function runCheckedItems(methodIndex, menu) {
       loadItemToEditor(item.id, item.group, menu);
     });
 
-    // Python 실행
+    // Python 실행 — 편집기에 수정된 코드가 있으면 그것을 사용
+    const codeToRun = editorCodeCache[item.id] || item.code;
     const resultEl = accDiv.querySelector('.item-result');
     const statusEl = accDiv.querySelector('.acc-status');
     try {
-      await executePythonForItem(item.code, resultEl);
+      await executePythonForItem(codeToRun, resultEl);
       statusEl.textContent = '✅';
       // 결과 저장 (APA 탭용)
       executionResults.push({

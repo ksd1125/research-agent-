@@ -1,6 +1,6 @@
 /**
  * agents.js — 에이전트 프롬프트 정의 및 API 호출
- * ResearchMethodAgent v5.0
+ * ResearchMethodAgent v6.0
  */
 
 import { API, MESSAGES } from './config.js';
@@ -1782,6 +1782,186 @@ ${userRequest}
     return {
       modifiedCode: codeMatch ? codeMatch[1].trim() : raw.trim(),
       explanation: '코드가 수정되었습니다.',
+    };
+  }
+}
+
+
+/* ============================================================
+   v6.0 — 방법론 학습 Q&A (경로 B)
+   ============================================================ */
+
+/**
+ * 방법론 개요 생성 — 카탈로그에서 방법론 선택 시 첫 안내 메시지
+ * @param {string} apiKey
+ * @param {Object} methodInfo - { id, title, subtitle, description }
+ * @returns {Promise<string>} HTML 형식 개요 텍스트
+ */
+export async function generateMethodologyOverview(apiKey, methodInfo) {
+  const prompt = `당신은 연구방법론 교수입니다. 학생이 "${methodInfo.title} (${methodInfo.subtitle})"을 학습하려 합니다.
+
+다음 내용을 간결하고 친근하게 설명해주세요 (한국어):
+
+1. **정의**: ${methodInfo.title}이(가) 무엇인지 2-3문장
+2. **언제 사용하나요**: 어떤 연구 질문에 적합한지 예시 2-3개
+3. **핵심 개념**: 꼭 알아야 할 개념 3-5개 (각 1줄 설명)
+4. **Python 실행 개요**: 주로 사용하는 라이브러리와 기본 워크플로우
+5. **다음 단계 제안**: "데이터를 먼저 생성해볼까요?" 또는 "기술통계부터 시작할까요?" 등
+
+형식:
+- 마크다운 사용 (**, -, 번호)
+- 코드 블록은 \`\`\`python으로 감싸기
+- 전체 길이: 300-500단어`;
+
+  const raw = await callGemini(apiKey, prompt, API.tokens.methodologyOverview);
+  return raw;
+}
+
+/**
+ * 방법론 Q&A 대화 — 사용자 질문에 대한 맥락적 답변
+ * @param {string} apiKey
+ * @param {string} question - 사용자 질문
+ * @param {Object} context - 대화 컨텍스트
+ * @param {string} context.category - 방법론 카테고리 ID
+ * @param {string} context.categoryTitle - 방법론 한글 제목
+ * @param {string} [context.currentCode] - 현재 코드 편집기 내용
+ * @param {string} [context.lastResult] - 최근 실행 결과
+ * @param {Array} [context.chatHistory] - 최근 대화 히스토리 (최대 10개)
+ * @returns {Promise<{answer: string, code?: string}>}
+ */
+export async function runMethodologyChat(apiKey, question, context) {
+  const historyText = (context.chatHistory || [])
+    .slice(-8)
+    .map(m => `${m.role === 'user' ? '학생' : 'AI'}: ${m.content.replace(/<[^>]*>/g, '').slice(0, 200)}`)
+    .join('\n');
+
+  const prompt = `당신은 연구방법론 전문 튜터입니다. "${context.categoryTitle}" 방법론을 학생에게 가르치고 있습니다.
+
+## 대화 히스토리
+${historyText || '(첫 질문)'}
+
+## 현재 코드 편집기
+${context.currentCode ? '```python\n' + context.currentCode.slice(0, 1500) + '\n```' : '(비어 있음)'}
+
+## 최근 실행 결과
+${context.lastResult ? context.lastResult.slice(0, 1000) : '(없음)'}
+
+## 학생 질문
+${question}
+
+## 응답 규칙
+1. 한국어로 친근하게 답변
+2. 질문에 Python 코드가 필요하면 반드시 포함 (완전한 실행 가능 코드)
+3. 코드는 \`\`\`python ... \`\`\`로 감싸기
+4. 실행 결과가 있으면 결과를 해석해주기
+5. 관련 통계 개념을 쉽게 설명
+6. 답변 길이: 3-8문장 + 필요시 코드
+
+JSON으로 응답하세요:
+{
+  "answer": "HTML 형식 답변 텍스트 (<strong>, <br>, <code> 사용 가능)",
+  "code": "Python 코드 (필요한 경우만, 없으면 null)"
+}`;
+
+  const raw = await callGemini(apiKey, prompt, API.tokens.methodologyChat, { jsonMode: true });
+
+  try {
+    const result = safeParseJSON(raw);
+    return {
+      answer: result.answer || raw,
+      code: result.code || null,
+    };
+  } catch {
+    // JSON 파싱 실패 시 코드 블록 추출 시도
+    const codeMatch = raw.match(/```python\s*([\s\S]*?)```/);
+    return {
+      answer: raw.replace(/```python[\s\S]*?```/g, '').trim(),
+      code: codeMatch ? codeMatch[1].trim() : null,
+    };
+  }
+}
+
+/**
+ * 실행 결과 해석 — Python 실행 결과를 AI가 해석
+ * @param {string} apiKey
+ * @param {string} code - 실행된 코드
+ * @param {string} result - 실행 결과 (stdout)
+ * @param {string} categoryTitle - 방법론 제목
+ * @returns {Promise<string>} 해석 텍스트 (HTML)
+ */
+export async function interpretResult(apiKey, code, result, categoryTitle) {
+  const prompt = `당신은 연구방법론 전문가입니다. 학생이 "${categoryTitle}" 학습 중 Python 코드를 실행했습니다.
+
+## 실행 코드
+\`\`\`python
+${code.slice(0, 2000)}
+\`\`\`
+
+## 실행 결과
+${result.slice(0, 2000)}
+
+## 요청
+위 결과를 학생이 이해할 수 있도록 해석해주세요:
+1. 주요 발견 사항 (숫자의 의미)
+2. 통계적 해석 (유의성, 효과 크기 등)
+3. 다음 추천 분석 단계
+
+한국어로, HTML 태그 사용 (<strong>, <br>, <ul><li>), 5-10문장으로 답변하세요.`;
+
+  return await callGemini(apiKey, prompt, API.tokens.methodologyChat);
+}
+
+/**
+ * 빠른 도구 코드 생성 — 빠른 도구 버튼 클릭 시 맥락 기반 코드 생성
+ * @param {string} apiKey
+ * @param {string} action - 도구 종류 (descriptive, visualization, assumption, generate-data, apa-report, recommend)
+ * @param {Object} context - { category, categoryTitle, currentCode, variables }
+ * @returns {Promise<{code: string, explanation: string}>}
+ */
+export async function generateQuickToolCode(apiKey, action, context) {
+  const actionDescriptions = {
+    'descriptive': '기술통계 분석 (평균, 표준편차, 사분위수, 왜도, 첨도)',
+    'visualization': '데이터 시각화 (히스토그램, 상자그림, 산점도)',
+    'assumption': '통계적 가정 검정 (정규성, 등분산성, 다중공선성)',
+    'generate-data': '가상 데이터 생성 (현재 방법론에 적합한 변수 구성)',
+    'apa-report': 'APA 스타일 결과 보고 (표, 그림 번호, 유의성 표기)',
+    'recommend': '현재 데이터/맥락에 적합한 분석 방법 추천',
+  };
+
+  const prompt = `당신은 Python 통계 분석 코드 생성기입니다.
+
+## 방법론: ${context.categoryTitle} (${context.category})
+## 요청: ${actionDescriptions[action] || action}
+
+## 현재 코드 편집기
+${context.currentCode ? '```python\n' + context.currentCode.slice(0, 1000) + '\n```' : '(비어 있음 — 새로 생성 필요)'}
+
+## 규칙
+1. Pyodide(브라우저 Python)에서 실행 가능한 완전한 코드 생성
+2. pandas, numpy, scipy, statsmodels, matplotlib, sklearn만 사용 가능
+3. 데이터가 없으면 np.random으로 샘플 데이터 포함
+4. print()로 결과 출력, matplotlib으로 그래프 (plt.savefig + plt.show)
+5. 한글 주석으로 각 단계 설명
+
+JSON으로 응답:
+{
+  "code": "완전한 Python 코드",
+  "explanation": "이 코드가 하는 일 1-2문장 (한국어)"
+}`;
+
+  const raw = await callGemini(apiKey, prompt, API.tokens.codeGenFromChat, { jsonMode: true });
+
+  try {
+    const result = safeParseJSON(raw);
+    return {
+      code: (result.code || '').trim(),
+      explanation: result.explanation || '코드가 생성되었습니다.',
+    };
+  } catch {
+    const codeMatch = raw.match(/```python\s*([\s\S]*?)```/) || raw.match(/```\s*([\s\S]*?)```/);
+    return {
+      code: codeMatch ? codeMatch[1].trim() : raw.trim(),
+      explanation: '코드가 생성되었습니다.',
     };
   }
 }
