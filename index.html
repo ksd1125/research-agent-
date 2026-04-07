@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ResearchMethodAgent v5.0</title>
+  <title>ResearchMethodAgent v6.0</title>
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <!-- Pyodide: 브라우저 내 Python 실행 (WebAssembly) -->
@@ -17,9 +17,40 @@
     <div class="header">
       <div class="header-content">
         <div class="header-title">ResearchMethodAgent</div>
-        <div class="header-badge">ResearchMethodAgent v5.0 · Gemini 2.5 Flash</div>
+        <div class="header-badge">ResearchMethodAgent v6.0 · Gemini 2.5 Flash</div>
       </div>
     </div>
+
+    <!-- ============================================================
+         HOME: 경로 선택 화면 (v6.0)
+         ============================================================ -->
+    <div class="home-screen" id="home-screen">
+      <div class="home-hero">
+        <h2 class="home-title">무엇을 하고 싶으신가요?</h2>
+        <p class="home-subtitle">논문 실습 또는 방법론 학습, 원하는 경로를 선택하세요</p>
+      </div>
+      <div class="home-cards">
+        <!-- 경로 A: 논문 실습 -->
+        <button class="home-card" id="path-a-btn">
+          <span class="home-card-icon">📄</span>
+          <span class="home-card-title">논문 실습</span>
+          <span class="home-card-desc">PDF 논문을 업로드하면 AI가 방법론을 감지하고, 데이터를 생성하여 단계별 분석 실습을 안내합니다.</span>
+          <span class="home-card-tag">PDF 업로드 → 자동 분석</span>
+        </button>
+        <!-- 경로 B: 방법론 학습 -->
+        <button class="home-card" id="path-b-btn">
+          <span class="home-card-icon">🎓</span>
+          <span class="home-card-title">방법론 학습</span>
+          <span class="home-card-desc">대화형 Q&A로 연구방법론을 탐구하고, 가상 데이터를 생성하여 직접 분석을 실습합니다.</span>
+          <span class="home-card-tag">대화형 학습 → 실습</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         PATH A: 논문 실습 (기존 v5.0 플로우)
+         ============================================================ -->
+    <div class="path-a-wrap" id="path-a-wrap" style="display:none">
 
     <!-- Config Card -->
     <div class="config-card" id="config-card">
@@ -207,6 +238,101 @@
         <button class="btn-print" id="print-btn">🖨️ 결과 인쇄</button>
       </div>
     </div>
+
+    </div><!-- /path-a-wrap -->
+
+    <!-- ============================================================
+         PATH B: 방법론 학습 (v6.0 신규)
+         ============================================================ -->
+    <div class="path-b-wrap" id="path-b-wrap" style="display:none">
+
+      <!-- 방법론 카탈로그 선택 화면 -->
+      <div class="catalog-screen" id="catalog-screen">
+        <div class="catalog-header">
+          <button class="btn-back-home" id="path-b-home-btn">← 홈으로</button>
+          <h2 class="catalog-title">방법론 카탈로그</h2>
+          <p class="catalog-subtitle">학습할 연구방법론을 선택하거나, 아래 채팅에서 자유롭게 질문하세요</p>
+          <div class="catalog-search-wrap">
+            <input type="text" id="catalog-search" class="catalog-search" placeholder="방법론 검색... (예: 회귀, DID, 머신러닝)">
+          </div>
+        </div>
+        <div class="catalog-grid" id="catalog-grid">
+          <!-- JS에서 동적 렌더링 -->
+        </div>
+        <!-- 자유 질의 입력 -->
+        <div class="catalog-free-ask">
+          <p class="catalog-free-label">뭘 분석해야 할지 모르겠다면?</p>
+          <div class="catalog-free-input-wrap">
+            <input type="text" id="catalog-free-input" class="catalog-free-input" placeholder="예: 기업 성과에 영향을 미치는 요인을 분석하고 싶어요">
+            <button id="catalog-free-send" class="btn-primary">시작</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3-Panel 학습 화면 -->
+      <div class="learn-screen" id="learn-screen" style="display:none">
+        <!-- 상단 바 -->
+        <div class="learn-topbar">
+          <button class="btn-back-catalog" id="back-catalog-btn">← 카탈로그</button>
+          <span class="learn-topbar-title" id="learn-topbar-title">방법론 학습</span>
+          <select class="learn-method-select" id="learn-method-select">
+            <!-- JS에서 동적 채움 -->
+          </select>
+        </div>
+
+        <!-- 3-Panel 본체 -->
+        <div class="learn-panels">
+          <!-- 좌측 상단: Python 코드 편집기 -->
+          <div class="learn-panel learn-panel-code" id="learn-panel-code">
+            <div class="learn-panel-header">
+              <span>Python 코드</span>
+              <div class="learn-panel-actions">
+                <button class="btn-sm btn-ai-edit" id="learn-ai-edit-btn">✨ AI 수정</button>
+                <button class="btn-sm btn-run" id="learn-run-btn">▶ 실행</button>
+              </div>
+            </div>
+            <textarea class="learn-code-editor" id="learn-code-editor" spellcheck="false" placeholder="# Python 코드가 여기에 표시됩니다&#10;# Q&A에서 분석을 요청하면 자동으로 코드가 생성됩니다"></textarea>
+          </div>
+
+          <!-- 우측 상단: 결과 미리보기 -->
+          <div class="learn-panel learn-panel-result" id="learn-panel-result">
+            <div class="learn-panel-header">
+              <span>결과 미리보기</span>
+              <div class="learn-panel-toggles">
+                <label class="results-toggle"><input type="checkbox" id="learn-toggle-python" checked> Python</label>
+                <label class="results-toggle"><input type="checkbox" id="learn-toggle-apa"> APA</label>
+              </div>
+            </div>
+            <div class="learn-result-body" id="learn-result-body">
+              <div class="learn-empty-state">
+                코드를 실행하면 결과가 여기에 표시됩니다
+              </div>
+            </div>
+          </div>
+
+          <!-- 하단: Q&A 대화 -->
+          <div class="learn-panel learn-panel-chat" id="learn-panel-chat">
+            <div class="learn-chat-messages" id="learn-chat-messages">
+              <!-- 환영 메시지는 JS에서 삽입 -->
+            </div>
+            <div class="learn-quick-tools" id="learn-quick-tools">
+              <button class="learn-quick-btn" data-action="descriptive">📊 기술통계</button>
+              <button class="learn-quick-btn" data-action="visualization">📈 시각화</button>
+              <button class="learn-quick-btn" data-action="assumption">🧪 가정 검정</button>
+              <button class="learn-quick-btn" data-action="generate-data">🔄 데이터 생성</button>
+              <button class="learn-quick-btn" data-action="apa-report">📝 APA 보고서</button>
+              <button class="learn-quick-btn" data-action="recommend">💡 추천 분석</button>
+            </div>
+            <div class="learn-chat-input-wrap">
+              <input type="text" id="learn-chat-input" class="learn-chat-input" placeholder="질문을 입력하세요... (예: 다중공선성은 어떻게 확인하나요?)">
+              <button id="learn-chat-send" class="btn-primary learn-chat-send-btn">전송</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /path-b-wrap -->
+
   </div>
 
   <script src="js/notebook.js"></script>
